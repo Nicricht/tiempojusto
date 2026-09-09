@@ -1,0 +1,28 @@
+name: State Machines
+
+on:
+  push:
+    paths:
+      - 'backend/state-machines/**'
+      - '.github/workflows/state-machines.yml'
+  pull_request:
+    paths:
+      - 'backend/state-machines/**'
+      - '.github/workflows/state-machines.yml'
+
+jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/state-machines
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Run contract tests
+        run: bash run-tests.sh
