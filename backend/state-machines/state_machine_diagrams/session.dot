@@ -1,0 +1,13 @@
+digraph G {
+  rankdir=LR; graph [bgcolor="white", pad="0.2", nodesep="0.28", ranksep="0.5"];
+  node [shape=box, style="rounded,filled", fillcolor="#f3f8ee", color="#4f772d", fontname="DejaVu Sans", fontsize=9];
+  edge [color="#4f772d", fontname="DejaVu Sans", fontsize=8];
+  subgraph cluster_p { label="Presencial"; color="#b7c9a8";
+    p1[label="EN_ROUTE"]; p2[label="ARRIVED"]; p3[label="MEETING_CONFIRMED"]; p4[label="FREE 5m"]; p5[label="PAID_ACTIVE"]; p6[label="PAUSED"]; p7[label="FINISHED"];
+    p1->p2[label="Arrival ETA+10"]; p2->p3[label="Handshake 5m (+5 once)"]; p3->p4; p4->p5[label="free 00"]; p5->p6[label="pause"]; p6->p5[label="bilateral resume"]; p4->p7[label="end $0"]; p5->p7[label="end proportional"]; p6->p7[label="end"];
+  }
+  subgraph cluster_o { label="Online"; color="#a9c4df";
+    o1[label="JOIN_WINDOW 3m"]; o2[label="FREE_ONLINE 2m"]; o3[label="AWAITING_PAID\n30s"]; o4[label="PAID_ACTIVE"]; o5[label="RECONNECTING 2m"]; o6[label="FINISHED_FREE"]; o7[label="FINISHED_RECONNECT_TIMEOUT"];
+    o1->o2[label="both + camera"]; o2->o3[label="free 00"]; o3->o4[label="bilateral + funds"]; o3->o6[label="reject/timeout"]; o4->o5[label="media invalid >5s"]; o5->o4[label="media + bilateral"]; o5->o7[label="2m timeout"];
+  }
+}
