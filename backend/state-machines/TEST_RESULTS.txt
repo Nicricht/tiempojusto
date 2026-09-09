@@ -1,0 +1,36 @@
+[PASS] Proposal lifecycle
+[PASS] Proposal amount guard
+[PASS] Meta triggers from highest compatible Proposal
+[PASS] Meta cancellation guard after 100%
+[PASS] Auction base 15 minutes
+[PASS] Auction anti-sniping resets to exactly 2:00
+[PASS] Funding failure never extends auction
+[PASS] Close Now closes immediately
+[PASS] Winner confirmation within 3 minutes
+[PASS] Winner timeout penalty and backups
+[PASS] Presential ETA max 30 minutes
+[PASS] Arrival creates handshake window but no billing
+[PASS] Handshake bilateral and single +5 extension
+[PASS] Presential free period is 5 minutes
+[PASS] Presential pause and bilateral resume
+[PASS] Online join window 3 minutes
+[PASS] Online free 2 minutes then bilateral paid consent
+[PASS] Online paid consent timeout finishes free
+[PASS] Online microcut tolerance 5 seconds
+[PASS] Online reconnect requires bilateral acceptance
+[PASS] Online reconnect timeout ends session
+[PASS] Extension +15/+30 and max 3 rounds
+[PASS] Extension fails without funds
+[PASS] Bidder no-show escalation
+[PASS] Host no-show escalation
+[PASS] Live requires >=5 minutes remaining
+[PASS] Live ticket pricing and cutoff
+[PASS] Live reconnect 2 minutes
+[PASS] Payout 60 minute hold
+[PASS] Payout objective incident creates review hold
+[PASS] Safety S5 requires human review
+[PASS] Safety undetermined assigns no culpability
+[PASS] Appeal window 7 days
+[PASS] Appeal can reduce or revoke
+
+PASS: 34 contract tests
