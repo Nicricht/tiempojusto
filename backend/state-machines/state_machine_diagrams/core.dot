@@ -1,0 +1,17 @@
+digraph G {
+  rankdir=LR; graph [bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.5"];
+  node [shape=box, style="rounded,filled", fillcolor="#eef4fb", color="#1f4e79", fontname="DejaVu Sans", fontsize=10];
+  edge [color="#365f91", fontname="DejaVu Sans", fontsize=9];
+  p1 [label="Proposal\nACTIVE"]; p2 [label="WITHDRAWN"]; p3 [label="EXPIRED"];
+  m1 [label="MetaNow\nACTIVE"]; m2 [label="TRIGGERED"]; m3 [label="CANCELLED / EXPIRED"];
+  a1 [label="Auction\nOPEN"]; a2 [label="EXTENDED\n(deadline +2:00)"]; a3 [label="CLOSED"]; a4 [label="CLOSED_NOW"];
+  w1 [label="Winner\nSELECTED"]; w2 [label="CONFIRMED"]; w3 [label="TIMED_OUT\n10% + backup"];
+  p1 -> p2 [label="withdraw"]; p1 -> p3 [label="7d timeout"];
+  p1 -> m1 [style=dashed,label="highest compatible"];
+  m1 -> m2 [label=">=100%"] ; m1 -> m3 [label="cancel <100% / timeout"];
+  m2 -> a1 [label="auto-open 15m"];
+  a1 -> a2 [label="valid Bid <=2:00"] ; a2 -> a2 [label="repeat"];
+  a1 -> a3 [label="timer 00"]; a2 -> a3 [label="timer 00"]; a1 -> a4 [label="Close Now"]; a2 -> a4 [label="Close Now"];
+  a3 -> w1; a4 -> w1;
+  w1 -> w2 [label="confirm <=3m"]; w1 -> w3 [label="3m timeout"]; w3 -> w1 [label="backup <=3 max",style=dashed];
+}
