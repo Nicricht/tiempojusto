@@ -1,0 +1,10 @@
+digraph G {
+  rankdir=LR; graph [bgcolor="white", pad="0.2", nodesep="0.3", ranksep="0.5"];
+  node [shape=box, style="rounded,filled", fillcolor="#fff4e6", color="#a65f00", fontname="DejaVu Sans", fontsize=9];
+  edge [color="#a65f00", fontname="DejaVu Sans", fontsize=8];
+  s1[label="REPORTED"]; s2[label="UNDER_REVIEW"]; s3[label="CONFIRMED\nS1-S5"]; s4[label="UNDETERMINED"]; s5[label="DISMISSED"];
+  a1[label="APPEAL OPEN\n<=7d"]; a2[label="MAINTAIN"]; a3[label="REDUCE"]; a4[label="REVOKE"];
+  s1->s2[label="triage valid"]; s2->s3[label="evidence sufficient"]; s2->s4[label="ambiguous"]; s2->s5[label="no support"];
+  s3->a1[label="appeal"]; a1->a2; a1->a3; a1->a4;
+  s3->s3 [label="S5 requires HumanReview", style=dashed];
+}
