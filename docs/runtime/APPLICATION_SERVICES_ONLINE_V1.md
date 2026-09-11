@@ -125,8 +125,8 @@ Si el monto proporcional es exactamente entero, responde `READY_FOR_SETTLEMENT`.
 - Regla exacta de redondeo proporcional CLP.
 - Staging y producción.
 
-## CI
+## CI y gate de merge
 
-La prueba de integración usa PostgreSQL 16 + PostGIS, ejecuta Schema V1.0 + V1.1 + V1.2, levanta el JAR Spring Boot y recorre el flujo HTTP persistente.
+La prueba de integración usa PostgreSQL 16 + PostGIS, ejecuta Schema V1.0 + V1.1 + V1.2, levanta el JAR Spring Boot y recorre el flujo HTTP persistente. Este corte no debe fusionarse si falla el job `Runtime Integration / postgres-and-app`.
 
 Para evitar esperar minutos reales, CI adelanta exclusivamente los timestamps FREE_ONLINE/PAID mediante SQL después de que las transiciones reales correspondientes ya fueron creadas. Esa aceleración no existe como endpoint de producto.
