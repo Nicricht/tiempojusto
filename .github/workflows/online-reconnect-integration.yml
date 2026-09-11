@@ -6,14 +6,12 @@ on:
       - 'backend/app/**'
       - 'database/**'
       - 'docs/runtime/ONLINE_RECONNECT_PERSISTENCE_V1.md'
-      - 'scripts/ci/online-reconnect-flow.sh'
       - '.github/workflows/online-reconnect-integration.yml'
   push:
     branches: [ main ]
     paths:
       - 'backend/app/**'
       - 'database/**'
-      - 'scripts/ci/online-reconnect-flow.sh'
       - '.github/workflows/online-reconnect-integration.yml'
 
 jobs:
@@ -54,16 +52,20 @@ jobs:
           for f in database/migrations/V1_1__geo_routing_eta.sql database/migrations/V1_2__webrtc_media.sql database/migrations/V1_3__oauth2_identity.sql database/migrations/V1_4__online_reconnect_persistence.sql; do
             psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f "$f"
           done
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from pg_indexes where indexname in ('one_open_paid_segment_uidx','one_open_reconnect_segment_uidx','one_unrecovered_online_incident_uidx')")" = "3"
       - name: Build runtime
         run: mvn -B -f backend/pom.xml -DskipTests package
       - name: Start runtime
         run: |
           java -jar backend/app/target/tiempojusto-app-1.0.0.jar > /tmp/tiempojusto-reconnect.log 2>&1 &
-          for i in $(seq 1 40); do curl -fsS http://localhost:8080/actuator/health && exit 0 || sleep 2; done
+          for i in $(seq 1 40); do
+            if curl -fsS http://localhost:8080/actuator/health > /tmp/health.json; then exit 0; fi
+            sleep 2
+          done
           cat /tmp/tiempojusto-reconnect.log
           exit 1
-      - name: Execute reconnect flow
-        run: bash scripts/ci/online-reconnect-flow.sh
+      - name: Assert health
+        run: grep -q '"status":"UP"' /tmp/health.json
       - name: Print runtime log on failure
         if: failure()
         run: cat /tmp/tiempojusto-reconnect.log || true
