@@ -1,3 +1,16 @@
+
+CREATE UNIQUE INDEX proposal_one_active_uidx
+ON market.proposal(bidder_user_id, host_profile_id, modality, duration_minutes)
+WHERE status = 'ACTIVE';
+
+CREATE TRIGGER proposal_set_updated_at
+BEFORE UPDATE ON market.proposal
+FOR EACH ROW EXECUTE FUNCTION platform.set_updated_at();
+
+CREATE TABLE market.proposal_metric_snapshot (
+    id bigserial PRIMARY KEY,
+    host_profile_id uuid NOT NULL REFERENCES profile.host_profile(id) ON DELETE CASCADE,
+    modality platform.modality NOT NULL,
     duration_minutes smallint NOT NULL,
     max_clp bigint,
     avg_clp bigint,
@@ -151,30 +164,3 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-
-CREATE CONSTRAINT TRIGGER auction_winner_integrity_guard
-AFTER INSERT OR UPDATE OF status, winner_user_id, winning_bid_id ON auction.auction
-DEFERRABLE INITIALLY DEFERRED
-FOR EACH ROW EXECUTE FUNCTION auction.assert_winner_integrity();
-
--- Minimal concurrency/funding guard. Backend still owns the full state machine.
-CREATE OR REPLACE FUNCTION auction.guard_and_sequence_bid()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    v_auc auction.auction%ROWTYPE;
-    v_res auction.funds_reservation%ROWTYPE;
-    v_elig platform.eligibility_status;
-    v_next_seq bigint;
-BEGIN
-    SELECT * INTO v_auc
-      FROM auction.auction
-     WHERE id = NEW.auction_id
-     FOR UPDATE;
-
-    IF NOT FOUND OR v_auc.status <> 'OPEN' THEN
-        RAISE EXCEPTION 'auction is not open';
-    END IF;
-
-    IF clock_timestamp() > v_auc.effective_end_at THEN

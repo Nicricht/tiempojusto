@@ -1,3 +1,30 @@
+
+CREATE CONSTRAINT TRIGGER auction_winner_integrity_guard
+AFTER INSERT OR UPDATE OF status, winner_user_id, winning_bid_id ON auction.auction
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION auction.assert_winner_integrity();
+
+-- Minimal concurrency/funding guard. Backend still owns the full state machine.
+CREATE OR REPLACE FUNCTION auction.guard_and_sequence_bid()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_auc auction.auction%ROWTYPE;
+    v_res auction.funds_reservation%ROWTYPE;
+    v_elig platform.eligibility_status;
+    v_next_seq bigint;
+BEGIN
+    SELECT * INTO v_auc
+      FROM auction.auction
+     WHERE id = NEW.auction_id
+     FOR UPDATE;
+
+    IF NOT FOUND OR v_auc.status <> 'OPEN' THEN
+        RAISE EXCEPTION 'auction is not open';
+    END IF;
+
+    IF clock_timestamp() > v_auc.effective_end_at THEN
         RAISE EXCEPTION 'auction deadline has passed';
     END IF;
 
@@ -138,43 +165,4 @@ CREATE TABLE appointment.arrival_check_in (
     checked_at timestamptz NOT NULL DEFAULT now(),
     location_event_id bigint REFERENCES geo.operational_location_event(id) ON DELETE SET NULL,
     evidence_hash text
-);
-
-CREATE TABLE appointment.meeting_handshake (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    appointment_id uuid NOT NULL UNIQUE REFERENCES appointment.appointment(id) ON DELETE CASCADE,
-    token_hash text NOT NULL UNIQUE,
-    host_confirmed_at timestamptz,
-    bidder_confirmed_at timestamptz,
-    completed_at timestamptz,
-    expires_at timestamptz NOT NULL,
-    status platform.handshake_status NOT NULL DEFAULT 'PENDING',
-    CONSTRAINT handshake_bilateral_ck CHECK (
-        completed_at IS NULL OR (host_confirmed_at IS NOT NULL AND bidder_confirmed_at IS NOT NULL)
-    ),
-    CONSTRAINT handshake_completed_state_ck CHECK (
-        status <> 'COMPLETED' OR completed_at IS NOT NULL
-    )
-);
-
-CREATE TABLE appointment.appointment_session (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    appointment_id uuid NOT NULL UNIQUE REFERENCES appointment.appointment(id) ON DELETE CASCADE,
-    session_mode platform.modality NOT NULL,
-    status platform.session_status NOT NULL DEFAULT 'WAITING',
-    free_started_at timestamptz,
-    free_ends_at timestamptz,
-    paid_started_at timestamptz,
-    ended_at timestamptz,
-    billable_seconds integer NOT NULL DEFAULT 0 CHECK (billable_seconds >= 0),
-    lock_version integer NOT NULL DEFAULT 0 CHECK (lock_version >= 0),
-    CONSTRAINT session_free_duration_ck CHECK (
-        free_ends_at IS NULL OR (
-            free_started_at IS NOT NULL AND (
-                (session_mode = 'IN_PERSON' AND free_ends_at = free_started_at + interval '5 minutes') OR
-                (session_mode = 'ONLINE' AND free_ends_at = free_started_at + interval '2 minutes')
-            )
-        )
-    ),
-    CONSTRAINT session_end_ck CHECK (ended_at IS NULL OR free_started_at IS NULL OR ended_at >= free_started_at)
 );

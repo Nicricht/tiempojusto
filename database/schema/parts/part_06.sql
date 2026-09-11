@@ -1,3 +1,65 @@
+
+CREATE TABLE finance.payment_dispute (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    provider_reference varchar(160) NOT NULL UNIQUE,
+    user_id uuid REFERENCES iam.app_user(id) ON DELETE SET NULL,
+    appointment_id uuid REFERENCES appointment.appointment(id) ON DELETE SET NULL,
+    amount_clp bigint NOT NULL CHECK (amount_clp > 0),
+    status platform.dispute_status NOT NULL,
+    opened_at timestamptz NOT NULL,
+    closed_at timestamptz,
+    evidence_bundle_ref text,
+    CONSTRAINT dispute_window_ck CHECK (closed_at IS NULL OR closed_at >= opened_at)
+);
+
+COMMENT ON TABLE finance.payment_dispute IS
+'V1.7: a chargeback does not automatically create debt for a compliant HOST. Recovery requires objective/audited grounds.';
+
+CREATE TABLE finance.penalty (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE RESTRICT,
+    appointment_id uuid REFERENCES appointment.appointment(id) ON DELETE SET NULL,
+    amount_clp bigint NOT NULL CHECK (amount_clp >= 0),
+    reason_code varchar(50) NOT NULL,
+    transaction_id uuid REFERENCES finance.ledger_transaction(id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE finance.compensation (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    beneficiary_user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE RESTRICT,
+    appointment_id uuid REFERENCES appointment.appointment(id) ON DELETE SET NULL,
+    amount_clp bigint NOT NULL CHECK (amount_clp >= 0),
+    reason_code varchar(50) NOT NULL,
+    transaction_id uuid REFERENCES finance.ledger_transaction(id) ON DELETE RESTRICT,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- --------------------------------------------------------------------------
+-- 11. Safety / Risk / Appeals
+-- --------------------------------------------------------------------------
+CREATE TABLE safety.report (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    reporter_user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE RESTRICT,
+    reported_user_id uuid REFERENCES iam.app_user(id) ON DELETE SET NULL,
+    appointment_id uuid REFERENCES appointment.appointment(id) ON DELETE SET NULL,
+    category varchar(50) NOT NULL,
+    description text,
+    status platform.report_status NOT NULL DEFAULT 'OPEN',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT report_not_self_ck CHECK (reported_user_id IS NULL OR reported_user_id <> reporter_user_id)
+);
+
+CREATE TABLE safety.safety_case (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    subject_user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE RESTRICT,
+    report_id uuid REFERENCES safety.report(id) ON DELETE SET NULL,
+    severity platform.safety_level NOT NULL,
+    decision_status platform.case_decision_status NOT NULL DEFAULT 'OPEN',
+    action_code varchar(50),
+    reversible boolean NOT NULL,
+    decided_at timestamptz,
+    appeal_deadline timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT safety_decision_ck CHECK (decided_at IS NULL OR decided_at >= created_at),
     CONSTRAINT safety_appeal_window_ck CHECK (appeal_deadline IS NULL OR decided_at IS NULL OR appeal_deadline = decided_at + interval '7 days')
@@ -106,75 +168,3 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-
-CREATE TRIGGER safety_case_irreversible_normalize
-BEFORE INSERT OR UPDATE OF severity, reversible, decision_status ON safety.safety_case
-FOR EACH ROW EXECUTE FUNCTION safety.normalize_irreversible_case();
-
-CREATE OR REPLACE FUNCTION safety.enqueue_irreversible_review()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF NEW.severity = 'S5' OR NEW.reversible = false THEN
-        INSERT INTO safety.human_review_task(safety_case_id, task_type, status)
-        SELECT NEW.id,
-               CASE WHEN NEW.severity = 'S5' THEN 'S5' ELSE 'IRREVERSIBLE' END,
-               'QUEUED'
-        WHERE NOT EXISTS (
-            SELECT 1 FROM safety.human_review_task
-             WHERE safety_case_id = NEW.id
-               AND status IN ('QUEUED','IN_PROGRESS')
-        );
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER safety_case_irreversible_queue
-AFTER INSERT OR UPDATE OF severity, reversible ON safety.safety_case
-FOR EACH ROW EXECUTE FUNCTION safety.enqueue_irreversible_review();
-
-CREATE TABLE safety.risk_signal (
-    id bigserial PRIMARY KEY,
-    user_id uuid REFERENCES iam.app_user(id) ON DELETE SET NULL,
-    signal_type varchar(80) NOT NULL,
-    score numeric(6,3),
-    source_ref text,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-
-COMMENT ON TABLE safety.risk_signal IS
-'Private Risk signal. Never expose as reputation/public score and never use beauty inference.';
-
--- --------------------------------------------------------------------------
--- 12. Comms
--- --------------------------------------------------------------------------
-CREATE TABLE comms.conversation (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    appointment_id uuid REFERENCES appointment.appointment(id) ON DELETE SET NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    closed_at timestamptz,
-    CONSTRAINT conversation_close_ck CHECK (closed_at IS NULL OR closed_at >= created_at)
-);
-
-CREATE TABLE comms.conversation_member (
-    conversation_id uuid NOT NULL REFERENCES comms.conversation(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE CASCADE,
-    joined_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (conversation_id, user_id)
-);
-
-CREATE TABLE comms.message (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    conversation_id uuid NOT NULL REFERENCES comms.conversation(id) ON DELETE CASCADE,
-    sender_user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE RESTRICT,
-    body text NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    deleted_at timestamptz,
-    CONSTRAINT message_delete_ck CHECK (deleted_at IS NULL OR deleted_at >= created_at)
-);
-
-CREATE TABLE comms.structured_request (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    appointment_id uuid NOT NULL REFERENCES appointment.appointment(id) ON DELETE CASCADE,

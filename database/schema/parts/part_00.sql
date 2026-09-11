@@ -169,13 +169,3 @@ CREATE TABLE iam.public_identity (
 CREATE TRIGGER public_identity_set_updated_at
 BEFORE UPDATE ON iam.public_identity
 FOR EACH ROW EXECUTE FUNCTION platform.set_updated_at();
-
-CREATE TABLE iam.identity_verification (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE CASCADE,
-    provider_code varchar(50) NOT NULL,
-    provider_reference varchar(160) NOT NULL UNIQUE,
-    status platform.verification_status NOT NULL,
-    verified_adult boolean NOT NULL DEFAULT false,
-    legal_country_code char(2),
-    date_of_birth date,
