@@ -8,7 +8,6 @@ import cl.tiempojusto.geo.GeoEligibilityService;
 import cl.tiempojusto.geo.MockRoutingPort;
 import cl.tiempojusto.geo.RoutingPort;
 import cl.tiempojusto.media.MockWebRtcPort;
-import cl.tiempojusto.media.WebRtcPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
@@ -47,10 +46,5 @@ public class CoreModulesConfiguration {
     @Profile({"default", "dev", "test", "ci"})
     public MockWebRtcPort mockWebRtcPort() {
         return new MockWebRtcPort();
-    }
-
-    @Bean
-    public WebRtcPort webRtcPort(MockWebRtcPort mockWebRtcPort) {
-        return mockWebRtcPort;
     }
 }
