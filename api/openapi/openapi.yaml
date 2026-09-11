@@ -1,0 +1,988 @@
+openapi: 3.1.0
+info:
+  title: TiempoJusto REST API
+  version: 1.0.0
+  description: >-
+    Contrato HTTP V1 del MVP on-demand. La fuente funcional es TiempoJusto V1.7.
+    El backend es autoridad para dinero, tiempo, ganador y estados. Scopes, códigos HTTP,
+    rate limits, ETag y versionado son decisiones técnicas P1.1 y no cambian reglas de producto.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: Identity
+  - name: Profiles
+  - name: Discovery
+  - name: Proposals
+  - name: Availability
+  - name: MetaNow
+  - name: Auctions
+  - name: Appointments
+  - name: Sessions
+  - name: Live
+  - name: Finance
+  - name: Reputation
+  - name: Safety
+x-tiempojusto-source: TiempoJusto Documento Maestro V1.7
+x-rate-limit-defaults:
+  read: 120/min/user
+  write: 30/min/user
+  bid: 30/min/user/auction
+  auth: 10/min/IP
+  report: 10/hour/user
+  payout: 5/hour/user
+paths:
+  /auth/register:
+    post:
+      tags: [Identity]
+      operationId: register
+      security: []
+      x-rate-limit: auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201': { $ref: '#/components/responses/AuthTokens' }
+        default: { $ref: '#/components/responses/Error' }
+  /auth/login:
+    post:
+      tags: [Identity]
+      operationId: login
+      security: []
+      x-rate-limit: auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AuthTokens' }
+        default: { $ref: '#/components/responses/Error' }
+  /auth/refresh:
+    post:
+      tags: [Identity]
+      operationId: refreshToken
+      security: []
+      x-rate-limit: auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/AuthTokens' }
+        default: { $ref: '#/components/responses/Error' }
+  /me:
+    get:
+      tags: [Identity]
+      operationId: getMe
+      x-required-scopes: [identity:read]
+      x-rate-limit: read
+      responses:
+        '200':
+          description: Identidad autenticada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        default: { $ref: '#/components/responses/Error' }
+  /verification/sessions:
+    post:
+      tags: [Identity]
+      operationId: createVerificationSession
+      x-required-scopes: [identity:verify]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /profiles/{profileId}:
+    parameters:
+      - $ref: '#/components/parameters/ProfileId'
+    get:
+      tags: [Profiles]
+      operationId: getProfile
+      x-required-scopes: [profile:read]
+      x-rate-limit: read
+      responses:
+        '200':
+          description: Perfil público
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Profiles]
+      operationId: updateProfile
+      x-required-scopes: [profile:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProfileUpdate' }
+      responses:
+        '200':
+          description: Perfil actualizado
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Profile' }
+        default: { $ref: '#/components/responses/Error' }
+  /discovery:
+    get:
+      tags: [Discovery]
+      operationId: discover
+      x-required-scopes: [discovery:read]
+      x-rate-limit: read
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+        - name: modality
+          in: query
+          schema: { type: string, enum: [IN_PERSON, ONLINE] }
+        - name: budgetMaxClp
+          in: query
+          schema: { $ref: '#/components/schemas/MoneyClp' }
+      responses:
+        '200': { $ref: '#/components/responses/Page' }
+        default: { $ref: '#/components/responses/Error' }
+  /map:
+    get:
+      tags: [Discovery]
+      operationId: getApproximateMap
+      description: Solo ubicación aproximada visible, nunca GPS operacional exacto.
+      x-required-scopes: [discovery:read]
+      x-rate-limit: read
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { $ref: '#/components/responses/Page' }
+        default: { $ref: '#/components/responses/Error' }
+  /profiles/{profileId}/proposals:
+    post:
+      tags: [Proposals]
+      operationId: createProposal
+      x-required-scopes: [proposal:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/ProfileId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProposalCreate' }
+      responses:
+        '201':
+          description: Proposal creada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proposal' }
+        default: { $ref: '#/components/responses/Error' }
+  /proposals/{proposalId}:
+    parameters:
+      - $ref: '#/components/parameters/ProposalId'
+    get:
+      tags: [Proposals]
+      operationId: getProposal
+      x-required-scopes: [proposal:read]
+      responses:
+        '200':
+          description: Proposal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proposal' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [Proposals]
+      operationId: updateProposal
+      x-required-scopes: [proposal:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProposalUpdate' }
+      responses:
+        '200':
+          description: Proposal actualizada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proposal' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Proposals]
+      operationId: withdrawProposal
+      x-required-scopes: [proposal:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Proposal retirada }
+        default: { $ref: '#/components/responses/Error' }
+  /availability/now:
+    post:
+      tags: [Availability]
+      operationId: activateNow
+      x-required-scopes: [availability:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AvailabilityCreate' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Availability]
+      operationId: deactivateNow
+      x-required-scopes: [availability:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Disponibilidad desactivada }
+        default: { $ref: '#/components/responses/Error' }
+  /goals/now:
+    get:
+      tags: [MetaNow]
+      operationId: getMetaNow
+      x-required-scopes: [meta:read]
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [MetaNow]
+      operationId: createMetaNow
+      x-required-scopes: [meta:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MetaNowCreate' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /auctions:
+    get:
+      tags: [Auctions]
+      operationId: listAuctions
+      x-required-scopes: [auction:read]
+      x-rate-limit: read
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { $ref: '#/components/responses/Page' }
+        default: { $ref: '#/components/responses/Error' }
+  /auctions/{auctionId}:
+    get:
+      tags: [Auctions]
+      operationId: getAuction
+      x-required-scopes: [auction:read]
+      x-rate-limit: read
+      parameters:
+        - $ref: '#/components/parameters/AuctionId'
+      responses:
+        '200':
+          description: Auction
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Auction' }
+        default: { $ref: '#/components/responses/Error' }
+  /auctions/{auctionId}/bids:
+    post:
+      tags: [Auctions]
+      operationId: placeBid
+      description: Fondos y riesgo se validan antes de BID_ACCEPTED; frontend no decide el pozo.
+      x-required-scopes: [bid:write]
+      x-rate-limit: bid
+      parameters:
+        - $ref: '#/components/parameters/AuctionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BidCreate' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /auctions/{auctionId}/close-now:
+    post:
+      tags: [Auctions]
+      operationId: closeNow
+      x-required-scopes: [bid:write]
+      x-rate-limit: bid
+      parameters:
+        - $ref: '#/components/parameters/AuctionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Auction adjudicada por cierre inmediato
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Auction' }
+        default: { $ref: '#/components/responses/Error' }
+  /appointments/{appointmentId}:
+    get:
+      tags: [Appointments]
+      operationId: getAppointment
+      x-required-scopes: [appointment:read]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /appointments/{appointmentId}/confirm-now:
+    post:
+      tags: [Appointments]
+      operationId: confirmWinnerNow
+      x-required-scopes: [appointment:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /appointments/{appointmentId}/arrival:
+    post:
+      tags: [Appointments]
+      operationId: confirmArrival
+      x-required-scopes: [appointment:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ArrivalRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /appointments/{appointmentId}/handshake:
+    post:
+      tags: [Appointments]
+      operationId: confirmHandshake
+      x-required-scopes: [appointment:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HandshakeRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /sessions/{sessionId}:
+    get:
+      tags: [Sessions]
+      operationId: getSession
+      x-required-scopes: [session:read]
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: Session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        default: { $ref: '#/components/responses/Error' }
+  /sessions/{sessionId}/start:
+    post:
+      tags: [Sessions]
+      operationId: startSession
+      x-required-scopes: [session:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { $ref: '#/components/responses/Session' }
+        default: { $ref: '#/components/responses/Error' }
+  /sessions/{sessionId}/pause:
+    post:
+      tags: [Sessions]
+      operationId: pauseSession
+      x-required-scopes: [session:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { $ref: '#/components/responses/Session' }
+        default: { $ref: '#/components/responses/Error' }
+  /sessions/{sessionId}/resume:
+    post:
+      tags: [Sessions]
+      operationId: resumeSession
+      x-required-scopes: [session:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BilateralDecision' }
+      responses:
+        '200': { $ref: '#/components/responses/Session' }
+        default: { $ref: '#/components/responses/Error' }
+  /sessions/{sessionId}/finish:
+    post:
+      tags: [Sessions]
+      operationId: finishSession
+      x-required-scopes: [session:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { $ref: '#/components/responses/Session' }
+        default: { $ref: '#/components/responses/Error' }
+  /sessions/{sessionId}/paid-consent:
+    post:
+      tags: [Sessions]
+      operationId: acceptPaidOnline
+      description: FREE_ONLINE no inicia billing; PAID_ACTIVE requiere aceptación bilateral.
+      x-required-scopes: [session:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BilateralDecision' }
+      responses:
+        '200': { $ref: '#/components/responses/Session' }
+        default: { $ref: '#/components/responses/Error' }
+  /sessions/{sessionId}/extensions:
+    post:
+      tags: [Sessions]
+      operationId: proposeExtension
+      x-required-scopes: [session:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExtensionCreate' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /extensions/{extensionId}/decision:
+    post:
+      tags: [Sessions]
+      operationId: decideExtension
+      x-required-scopes: [session:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/ExtensionId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BilateralDecision' }
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /auctions/{auctionId}/live:
+    get:
+      tags: [Live]
+      operationId: getLiveForAuction
+      x-required-scopes: [live:read]
+      parameters:
+        - $ref: '#/components/parameters/AuctionId'
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [Live]
+      operationId: startLiveForAuction
+      x-required-scopes: [live:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/AuctionId'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /live/{liveId}/tickets:
+    post:
+      tags: [Live]
+      operationId: buyLiveTicket
+      description: Precio y cutoff se calculan solo en backend según tiempo restante.
+      x-required-scopes: [live:ticket]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/LiveId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /payments/balance:
+    get:
+      tags: [Finance]
+      operationId: getBalance
+      x-required-scopes: [payments:read]
+      responses:
+        '200':
+          description: Saldo financiero
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Balance' }
+        default: { $ref: '#/components/responses/Error' }
+  /refunds:
+    post:
+      tags: [Finance]
+      operationId: requestRefund
+      x-required-scopes: [payments:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefundRequest' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /payouts:
+    post:
+      tags: [Finance]
+      operationId: requestPayout
+      x-required-scopes: [payout:write]
+      x-rate-limit: payout
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PayoutRequest' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /users/{userId}/reputation:
+    get:
+      tags: [Reputation]
+      operationId: getReputation
+      x-required-scopes: [reputation:read]
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /ratings:
+    post:
+      tags: [Reputation]
+      operationId: createRating
+      x-required-scopes: [reputation:write]
+      x-rate-limit: write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RatingCreate' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /reports:
+    post:
+      tags: [Safety]
+      operationId: createReport
+      x-required-scopes: [safety:write]
+      x-rate-limit: report
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReportCreate' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /cases/{caseId}:
+    get:
+      tags: [Safety]
+      operationId: getSafetyCase
+      x-required-scopes: [safety:read]
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      responses:
+        '200': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+  /appeals:
+    post:
+      tags: [Safety]
+      operationId: createAppeal
+      x-required-scopes: [safety:appeal]
+      x-rate-limit: report
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppealCreate' }
+      responses:
+        '201': { $ref: '#/components/responses/Resource' }
+        default: { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  headers:
+    ETag:
+      description: Versión del recurso, por ejemplo v7.
+      schema: { type: string }
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID estable por intención; mismo key + mismo payload devuelve mismo resultado.
+      schema: { type: string, format: uuid }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: Versión/ETag del recurso leído previamente.
+      schema: { type: string }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string, maxLength: 512 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+    ProfileId: { name: profileId, in: path, required: true, schema: { type: string, format: uuid } }
+    ProposalId: { name: proposalId, in: path, required: true, schema: { type: string, format: uuid } }
+    AuctionId: { name: auctionId, in: path, required: true, schema: { type: string, format: uuid } }
+    AppointmentId: { name: appointmentId, in: path, required: true, schema: { type: string, format: uuid } }
+    SessionId: { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+    ExtensionId: { name: extensionId, in: path, required: true, schema: { type: string, format: uuid } }
+    LiveId: { name: liveId, in: path, required: true, schema: { type: string, format: uuid } }
+    UserId: { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+    CaseId: { name: caseId, in: path, required: true, schema: { type: string, format: uuid } }
+  responses:
+    Error:
+      description: Error de API
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+    Resource:
+      description: Recurso
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/GenericResource' }
+    Page:
+      description: Página cursor-based
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Page' }
+    Session:
+      description: Session
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Session' }
+    AuthTokens:
+      description: Tokens emitidos
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/AuthTokens' }
+  schemas:
+    MoneyClp:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Monto entero en CLP. Nunca float.
+    ApiError:
+      type: object
+      required: [code, category, message, traceId, timestamp]
+      properties:
+        code: { type: string, example: FUNDS_INSUFFICIENT }
+        category:
+          type: string
+          enum: [VALIDATION, AUTHENTICATION, AUTHORIZATION, ELIGIBILITY, FUNDS, CONFLICT, INVALID_STATE, RATE_LIMIT, PROVIDER, NOT_FOUND, INTERNAL]
+        message: { type: string }
+        traceId: { type: string }
+        timestamp: { type: string, format: date-time }
+        retryable: { type: boolean, default: false }
+        details: { type: object, additionalProperties: true }
+    GenericResource:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string }
+        version: { type: integer, minimum: 1 }
+        serverTime: { type: string, format: date-time }
+      additionalProperties: true
+    Page:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/GenericResource' }
+        nextCursor: { type: [string, 'null'] }
+        hasMore: { type: boolean }
+    AuthTokens:
+      type: object
+      required: [accessToken, refreshToken, expiresIn]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresIn: { type: integer, minimum: 60 }
+        tokenType: { type: string, const: Bearer }
+    RegisterRequest:
+      type: object
+      required: [email, password, requestedRole, acceptTerms]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 12, maxLength: 128 }
+        requestedRole: { type: string, enum: [HOST, BIDDER] }
+        acceptTerms: { type: boolean, const: true }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 1 }
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+    Me:
+      type: object
+      required: [id, publicId, role, accountStatus, verificationStatus]
+      properties:
+        id: { type: string, format: uuid }
+        publicId: { type: string }
+        role: { type: string, enum: [HOST, BIDDER, ADMIN] }
+        accountStatus: { type: string, enum: [PENDING_VERIFICATION, ACTIVE, RESTRICTED, SUSPENDED, CLOSED] }
+        verificationStatus: { type: string, enum: [NOT_STARTED, PENDING, VERIFIED, REJECTED, REVIEW] }
+    Profile:
+      type: object
+      required: [id, userId, username, displayName, modalities, version]
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+        bio: { type: string, maxLength: 1000 }
+        publicAge: { type: [integer, 'null'], minimum: 18 }
+        modalities:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: [IN_PERSON, ONLINE] }
+        approximateZone: { type: [string, 'null'] }
+        mapVisible: { type: boolean }
+        selfDeclaredAttributes: { type: object, additionalProperties: true }
+        version: { type: integer, minimum: 1 }
+    ProfileUpdate:
+      type: object
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+        bio: { type: string, maxLength: 1000 }
+        mapVisible: { type: boolean }
+        selfDeclaredAttributes: { type: object, additionalProperties: true }
+    ProposalCreate:
+      type: object
+      required: [modality, durationMinutes, amountClp]
+      properties:
+        modality: { type: string, enum: [IN_PERSON, ONLINE] }
+        durationMinutes: { type: integer, enum: [15, 30, 60, 90] }
+        amountClp: { $ref: '#/components/schemas/MoneyClp' }
+    ProposalUpdate:
+      type: object
+      required: [amountClp]
+      properties:
+        amountClp: { $ref: '#/components/schemas/MoneyClp' }
+    Proposal:
+      type: object
+      required: [id, hostProfileId, modality, durationMinutes, amountClp, status, validUntil, version]
+      properties:
+        id: { type: string, format: uuid }
+        hostProfileId: { type: string, format: uuid }
+        modality: { type: string, enum: [IN_PERSON, ONLINE] }
+        durationMinutes: { type: integer }
+        amountClp: { $ref: '#/components/schemas/MoneyClp' }
+        status: { type: string, enum: [ACTIVE, UPDATED, WITHDRAWN, EXPIRED] }
+        validUntil: { type: string, format: date-time }
+        cooldownUntil: { type: [string, 'null'], format: date-time }
+        version: { type: integer, minimum: 1 }
+    AvailabilityCreate:
+      type: object
+      required: [modality, durationMinutes]
+      properties:
+        modality: { type: string, enum: [IN_PERSON, ONLINE] }
+        durationMinutes: { type: integer, enum: [15, 30, 60, 90] }
+        placeType: { type: [string, 'null'], enum: [PUBLIC, PRIVATE, null] }
+        closeNowAmountClp:
+          oneOf:
+            - { $ref: '#/components/schemas/MoneyClp' }
+            - { type: 'null' }
+    MetaNowCreate:
+      type: object
+      required: [targetAmountClp, windowMinutes, modality, durationMinutes]
+      properties:
+        targetAmountClp: { $ref: '#/components/schemas/MoneyClp' }
+        windowMinutes: { type: integer, enum: [30, 60, 120, 240] }
+        modality: { type: string, enum: [IN_PERSON, ONLINE] }
+        durationMinutes: { type: integer, enum: [15, 30, 60, 90] }
+    Auction:
+      type: object
+      required: [id, status, currentAmountClp, nextActionableAmountClp, effectiveEndAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [ACTIVE, EXTENDED, CLOSED, CLOSED_NOW, AWARDED, CANCELLED] }
+        currentAmountClp: { $ref: '#/components/schemas/MoneyClp' }
+        nextActionableAmountClp: { $ref: '#/components/schemas/MoneyClp' }
+        closeNowAmountClp:
+          oneOf:
+            - { $ref: '#/components/schemas/MoneyClp' }
+            - { type: 'null' }
+        effectiveEndAt: { type: string, format: date-time }
+        winnerUserId: { type: [string, 'null'], format: uuid }
+        version: { type: integer, minimum: 1 }
+    BidCreate:
+      type: object
+      required: [amountClp]
+      properties:
+        amountClp: { $ref: '#/components/schemas/MoneyClp' }
+    ArrivalRequest:
+      type: object
+      required: [lat, lon, accuracyMeters]
+      properties:
+        lat: { type: number, minimum: -90, maximum: 90 }
+        lon: { type: number, minimum: -180, maximum: 180 }
+        accuracyMeters: { type: number, minimum: 0, maximum: 500 }
+        capturedAtDevice: { type: [string, 'null'], format: date-time }
+    HandshakeRequest:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string, minLength: 8, maxLength: 512 }
+    Session:
+      type: object
+      required: [id, status, billableSeconds, version]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [FREE, AWAITING_PAID_CONFIRMATION, PAID_ACTIVE, PAUSED, RECONNECTING, FINISHED] }
+        billableSeconds: { type: integer, minimum: 0 }
+        freeEndsAt: { type: [string, 'null'], format: date-time }
+        reconnectDeadline: { type: [string, 'null'], format: date-time }
+        version: { type: integer, minimum: 1 }
+    BilateralDecision:
+      type: object
+      required: [accept]
+      properties:
+        accept: { type: boolean }
+    ExtensionCreate:
+      type: object
+      required: [minutes, amountClp]
+      properties:
+        minutes: { type: integer, enum: [15, 30] }
+        amountClp: { $ref: '#/components/schemas/MoneyClp' }
+    Balance:
+      type: object
+      required: [pendingClp, availableClp, heldForReviewClp, paidOutClp]
+      properties:
+        pendingClp: { $ref: '#/components/schemas/MoneyClp' }
+        availableClp: { $ref: '#/components/schemas/MoneyClp' }
+        heldForReviewClp: { $ref: '#/components/schemas/MoneyClp' }
+        paidOutClp: { $ref: '#/components/schemas/MoneyClp' }
+    RefundRequest:
+      type: object
+      required: [paymentId, amountClp, reason]
+      properties:
+        paymentId: { type: string, format: uuid }
+        amountClp: { $ref: '#/components/schemas/MoneyClp' }
+        reason: { type: string, maxLength: 500 }
+    PayoutRequest:
+      type: object
+      required: [amountClp]
+      properties:
+        amountClp: { $ref: '#/components/schemas/MoneyClp' }
+    RatingCreate:
+      type: object
+      required: [appointmentId, rating]
+      properties:
+        appointmentId: { type: string, format: uuid }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string, maxLength: 1000 }
+    ReportCreate:
+      type: object
+      required: [targetUserId, category, description]
+      properties:
+        targetUserId: { type: string, format: uuid }
+        appointmentId: { type: [string, 'null'], format: uuid }
+        category: { type: string, maxLength: 64 }
+        description: { type: string, minLength: 10, maxLength: 4000 }
+        evidenceRefs:
+          type: array
+          maxItems: 20
+          items: { type: string }
+    AppealCreate:
+      type: object
+      required: [caseId, statement]
+      properties:
+        caseId: { type: string, format: uuid }
+        statement: { type: string, minLength: 10, maxLength: 4000 }
+        evidenceRefs:
+          type: array
+          maxItems: 20
+          items: { type: string }
