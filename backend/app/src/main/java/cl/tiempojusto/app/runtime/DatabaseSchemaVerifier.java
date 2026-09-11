@@ -16,7 +16,7 @@ public class DatabaseSchemaVerifier implements ApplicationRunner {
             "iam.app_user",
             "market.proposal",
             "auction.auction",
-            "session.experience_session",
+            "appointment.appointment_session",
             "finance.ledger_entry",
             "finance.payout",
             "geo.route_estimate_snapshot",
