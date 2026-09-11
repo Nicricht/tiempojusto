@@ -5,7 +5,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -130,8 +131,8 @@ public class AdminReviewApplicationService {
             throw ApiProblem.conflict("REVIEW_ASSIGNED_TO_OTHER_ADMIN", "El caso está asignado a otro administrador.");
         }
 
-        Instant now = Instant.now();
-        Instant deadline = outcome.equals("CONFIRMED") ? now.plusSeconds(7L * 24 * 3600) : null;
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        OffsetDateTime deadline = outcome.equals("CONFIRMED") ? now.plusDays(7) : null;
         jdbc.update("""
                 update safety.safety_case
                    set severity = ?::platform.safety_level,
