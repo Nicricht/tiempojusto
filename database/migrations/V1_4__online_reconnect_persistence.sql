@@ -22,13 +22,13 @@ WHERE video_room_id IS NOT NULL
   AND incident_type = 'ONLINE_MEDIA_INTERRUPTION'
   AND recovered_at IS NULL;
 
-COMMENT ON INDEX one_open_paid_segment_uidx IS
+COMMENT ON INDEX appointment.one_open_paid_segment_uidx IS
 'At most one billable PAID segment may remain open for a session.';
 
-COMMENT ON INDEX one_open_reconnect_segment_uidx IS
+COMMENT ON INDEX appointment.one_open_reconnect_segment_uidx IS
 'At most one non-billable RECONNECT segment may remain open for a session.';
 
-COMMENT ON INDEX one_unrecovered_online_incident_uidx IS
+COMMENT ON INDEX media.one_unrecovered_online_incident_uidx IS
 'At most one unresolved Online media interruption may exist per private video room.';
 
 COMMIT;
