@@ -4,13 +4,13 @@ on:
   pull_request:
     paths:
       - 'backend/app/**'
-      - 'database/migrations/V1_3__oauth2_identity.sql'
+      - 'database/**'
       - '.github/workflows/auth-integration.yml'
   push:
     branches: [ main ]
     paths:
       - 'backend/app/**'
-      - 'database/migrations/V1_3__oauth2_identity.sql'
+      - 'database/**'
       - '.github/workflows/auth-integration.yml'
 
 jobs:
@@ -57,13 +57,14 @@ jobs:
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
-      - name: Load database
+      - name: Load database through V1.5
         run: |
           psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/schema/TiempoJusto_PostgreSQL_Schema_V1_0.sql
-          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_1__geo_routing_eta.sql
-          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_2__webrtc_media.sql
-          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_3__oauth2_identity.sql
+          for f in database/migrations/V1_1__geo_routing_eta.sql database/migrations/V1_2__webrtc_media.sql database/migrations/V1_3__oauth2_identity.sql database/migrations/V1_4__online_reconnect_persistence.sql database/migrations/V1_5__persistent_session_settlement.sql; do
+            psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f "$f"
+          done
           test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from pg_class where oid='iam.oauth_identity'::regclass")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from pg_class where oid='finance.session_settlement'::regclass")" = "1"
 
       - name: Generate ephemeral CI JWT key
         run: |
