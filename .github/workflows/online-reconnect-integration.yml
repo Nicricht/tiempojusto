@@ -64,8 +64,17 @@ jobs:
           done
           cat /tmp/tiempojusto-reconnect.log
           exit 1
-      - name: Assert health
-        run: grep -q '"status":"UP"' /tmp/health.json
+      - name: Execute persistent reconnect golden path
+        run: |
+          curl -fsS -X POST http://localhost:8080/internal/ci/golden-path/online-reconnect > /tmp/reconnect.json
+          cat /tmp/reconnect.json
+          grep -q '"status":"PASS"' /tmp/reconnect.json
+          grep -q '"microCut4sState":"PAID_ACTIVE"' /tmp/reconnect.json
+          grep -q '"interruption6sState":"RECONNECTING"' /tmp/reconnect.json
+          grep -q '"recoveredWithoutBillingResumeState":"RECONNECTING"' /tmp/reconnect.json
+          grep -q '"bilateralResumeState":"PAID_ACTIVE"' /tmp/reconnect.json
+          grep -q '"timeoutState":"ENDED"' /tmp/reconnect.json
+          grep -q '"persistentRecordingEnabled":false' /tmp/reconnect.json
       - name: Print runtime log on failure
         if: failure()
         run: cat /tmp/tiempojusto-reconnect.log || true
