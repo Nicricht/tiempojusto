@@ -12,6 +12,8 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -124,12 +126,14 @@ public class PersistentSettlementGoldenPathService {
 
     private Fixture paidFixture(String suffix, int durationMinutes, long closeNowAmountClp, int paidSeconds) {
         Fixture fixture = freeFixture(suffix, durationMinutes, closeNowAmountClp);
+        Instant freeEndAt = Instant.now();
+        Instant freeStartAt = freeEndAt.minusSeconds(120);
         jdbc.update("""
                 update appointment.appointment_session
-                   set free_started_at = clock_timestamp() - interval '2 minutes',
-                       free_ends_at = clock_timestamp()
+                   set free_started_at = ?,
+                       free_ends_at = ?
                  where id = ?
-                """, fixture.sessionId());
+                """, Timestamp.from(freeStartAt), Timestamp.from(freeEndAt), fixture.sessionId());
         jdbc.update("""
                 update media.video_room vr
                    set free_online_end = s.free_ends_at
