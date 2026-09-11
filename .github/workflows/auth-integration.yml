@@ -121,7 +121,12 @@ jobs:
           grep -q "\"userId\":\"$USER_ID\"" /tmp/me.json
           grep -q '"accountStatus":"ACTIVE"' /tmp/me.json
 
-          TAMPERED="${TOKEN%?}x"
+          LAST="${TOKEN: -1}"
+          if [ "$LAST" = "x" ]; then
+            TAMPERED="${TOKEN%?}y"
+          else
+            TAMPERED="${TOKEN%?}x"
+          fi
           CODE=$(curl -sS -o /tmp/tampered.json -w '%{http_code}' http://localhost:8080/api/v1/auth/me -H "Authorization: Bearer $TAMPERED")
           test "$CODE" = "401"
 
