@@ -1,6 +1,7 @@
 package cl.tiempojusto.app.api;
 
 import cl.tiempojusto.app.application.OnlineApplicationService;
+import cl.tiempojusto.app.application.OnlineSessionTerminationService;
 import cl.tiempojusto.app.security.ActorContext;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
@@ -12,10 +13,14 @@ import java.util.UUID;
 @RequestMapping("/api/v1")
 public class OnlineSessionController {
     private final OnlineApplicationService online;
+    private final OnlineSessionTerminationService termination;
     private final ActorContext actors;
 
-    public OnlineSessionController(OnlineApplicationService online, ActorContext actors) {
+    public OnlineSessionController(OnlineApplicationService online,
+                                   OnlineSessionTerminationService termination,
+                                   ActorContext actors) {
         this.online = online;
+        this.termination = termination;
         this.actors = actors;
     }
 
@@ -47,9 +52,9 @@ public class OnlineSessionController {
     }
 
     @PostMapping("/sessions/{sessionId}/finish")
-    public ResponseEntity<OnlineApplicationService.FinishResult> finish(
+    public ResponseEntity<OnlineSessionTerminationService.FinishResult> finish(
             HttpServletRequest http,
             @PathVariable UUID sessionId) {
-        return ResponseEntity.ok(online.finish(actors.requireActor(http), sessionId));
+        return ResponseEntity.ok(termination.finish(actors.requireActor(http), sessionId));
     }
 }
