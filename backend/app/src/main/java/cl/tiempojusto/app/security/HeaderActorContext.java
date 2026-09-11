@@ -3,11 +3,13 @@ package cl.tiempojusto.app.security;
 import cl.tiempojusto.app.api.ApiProblem;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.UUID;
 
 @Component
+@ConditionalOnProperty(name = "tiempojusto.auth.jwt-enabled", havingValue = "false", matchIfMissing = true)
 public class HeaderActorContext implements ActorContext {
     private static final String HEADER = "X-TJ-Actor-Id";
     private final boolean enabled;
@@ -20,7 +22,7 @@ public class HeaderActorContext implements ActorContext {
     public UUID requireActor(HttpServletRequest request) {
         if (!enabled) {
             throw ApiProblem.unavailable("AUTH_ADAPTER_NOT_CONFIGURED",
-                    "El adapter OAuth/JWT real aún no está configurado. El header de desarrollo está deshabilitado.");
+                    "OAuth2/JWT no está habilitado y el header de desarrollo está deshabilitado.");
         }
         String raw = request.getHeader(HEADER);
         if (raw == null || raw.isBlank()) {

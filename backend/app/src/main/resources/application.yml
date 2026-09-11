@@ -24,3 +24,14 @@ tiempojusto:
     verify-database: ${TJ_VERIFY_DATABASE:true}
   auth:
     dev-header-enabled: ${TJ_AUTH_DEV_HEADER_ENABLED:false}
+    jwt-enabled: ${TJ_AUTH_JWT_ENABLED:false}
+    jwt:
+      issuer: ${TJ_AUTH_JWT_ISSUER:}
+      audience: ${TJ_AUTH_JWT_AUDIENCE:}
+      jwk-set-uri: ${TJ_AUTH_JWT_JWK_SET_URI:}
+      hmac-secret-b64: ${TJ_AUTH_JWT_HMAC_SECRET_B64:}
+    refresh:
+      enabled: ${TJ_AUTH_REFRESH_ENABLED:false}
+      token-uri: ${TJ_AUTH_REFRESH_TOKEN_URI:}
+      client-id: ${TJ_AUTH_REFRESH_CLIENT_ID:}
+      client-secret: ${TJ_AUTH_REFRESH_CLIENT_SECRET:}

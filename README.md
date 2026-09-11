@@ -4,9 +4,9 @@ Repositorio técnico del proyecto **TiempoJusto**.
 
 ## Estado actual
 
-TiempoJusto ya pasó de definición funcional a una integración ejecutable con una primera vertical slice persistente. El repositorio contiene schema PostgreSQL/PostGIS V1, máquinas de estado Java 21, Finance/Ledger core, OpenAPI REST V1, WebSocket V1, Geo/ETA V1, WebRTC/Media V1, wireframes UX P2.1, runtime Spring Boot y application services para el recorrido Online.
+TiempoJusto ya pasó de definición funcional a una integración ejecutable con una primera vertical slice persistente. El repositorio contiene schema PostgreSQL/PostGIS V1, máquinas de estado Java 21, Finance/Ledger core, OpenAPI REST V1, WebSocket V1, Geo/ETA V1, WebRTC/Media V1, wireframes UX P2.1, runtime Spring Boot, application services para el recorrido Online y autenticación OAuth2/JWT provider-neutral.
 
-El workflow `Runtime Integration` ejecuta Schema V1.0 + migraciones V1.1/V1.2 sobre PostgreSQL 16 + PostGIS real, compila el reactor Java, inicia el JAR, exige `/actuator/health = UP`, mantiene el Golden Path sandbox anterior y además recorre por HTTP el nuevo flujo persistente desde registro/KYC sandbox hasta finalización de una sesión Online.
+El workflow `Runtime Integration` ejecuta Schema V1.0 + migraciones V1.1/V1.2 sobre PostgreSQL 16 + PostGIS real, compila el reactor Java, inicia el JAR, exige `/actuator/health = UP`, mantiene el Golden Path sandbox anterior y recorre por HTTP el flujo persistente Online. El workflow `Auth Integration` añade la migración V1.3, firma/valida JWT reales en CI, comprueba issuer/audience, resuelve `iss + sub` contra IAM y prueba el contrato OAuth2 de refresh token.
 
 ## Estructura principal
 
@@ -16,10 +16,12 @@ El workflow `Runtime Integration` ejecuta Schema V1.0 + migraciones V1.1/V1.2 so
   Migración P1.3 para privacidad geográfica, ETA y elegibilidad presencial.
 - `database/migrations/V1_2__webrtc_media.sql`
   Migración P1.4 para estado de media, cámara válida, no grabación, incidents y reconexión.
+- `database/migrations/V1_3__oauth2_identity.sql`
+  Binding provider-neutral `issuer + subject` hacia el usuario interno de TiempoJusto.
 - `backend/pom.xml`
   Reactor Maven para State Machines, Finance, Geo, Media y la aplicación integrada.
 - `backend/app/`
-  Runtime Spring Boot Java 21 con datasource PostgreSQL, health, application services, endpoints HTTP y transactional outbox/audit.
+  Runtime Spring Boot Java 21 con datasource PostgreSQL, health, application services, OAuth2 Resource Server, endpoints HTTP y transactional outbox/audit.
 - `backend/state-machines/`
   Máquinas de estado Java 21 y 34 contract tests.
 - `backend/finance/`
@@ -39,7 +41,9 @@ El workflow `Runtime Integration` ejecuta Schema V1.0 + migraciones V1.1/V1.2 so
 - `docs/runtime/GOLDEN_PATH_ONLINE_V1.md`
   Vertical slice Online sandbox original y sus invariantes.
 - `docs/runtime/APPLICATION_SERVICES_ONLINE_V1.md`
-  Application services, persistencia transaccional, endpoints y límites del nuevo flujo Online persistente.
+  Application services, persistencia transaccional, endpoints y límites del flujo Online persistente.
+- `docs/runtime/OAUTH2_JWT_AUTH_V1.md`
+  Arquitectura OAuth2/OIDC, JWT, mapping IAM y refresh-token adapter.
 
 ## Wireframes UX P2.1
 
@@ -55,6 +59,7 @@ Incluye onboarding/KYC, discovery, mapa aproximado, perfil, Proposal, Disponible
 | Producto / reglas V1.7 | ✅ definido |
 | ER físico V1.0 | ✅ diseñado |
 | PostgreSQL/PostGIS V1.0 + V1.1 + V1.2 | ✅ ejecutado en PostgreSQL 16/PostGIS por CI |
+| OAuth identity V1.3 | ✅ migración y lookup IAM |
 | State Machines Java 21 | ✅ 34/34 tests |
 | Ledger + PaymentPort Mock | ✅ 22/22 tests |
 | OpenAPI REST V1 | ✅ implementado |
@@ -66,7 +71,9 @@ Incluye onboarding/KYC, discovery, mapa aproximado, perfil, Proposal, Disponible
 | Golden Path Online sandbox | ✅ CI end-to-end entre módulos |
 | Application services Online persistentes | ✅ registro/KYC sandbox -> Proposal -> Close Now -> Online -> FINISHED |
 | Transactional audit/outbox | ✅ aplicado a mutaciones críticas del corte |
-| OAuth2/JWT real | pendiente |
+| OAuth2/JWT Resource Server | ✅ firma, issuer, audience y actor IAM validados en CI |
+| Refresh-token OAuth2 adapter | ✅ contrato implementado; proveedor definitivo pendiente |
+| Proveedor OAuth2/OIDC definitivo | pendiente |
 | KYC real | pendiente |
 | PaymentPort / payouts reales | pendiente |
 | Ledger/Finance persistente de aplicación | pendiente |
@@ -79,7 +86,7 @@ Incluye onboarding/KYC, discovery, mapa aproximado, perfil, Proposal, Disponible
 | Security / E2E ampliados / observability | pendiente |
 | Staging / piloto | pendiente |
 
-> La validación PostgreSQL indicada es reproducible en CI y no equivale a staging o producción. Los endpoints `sandbox` y los adapters Mock siguen sin procesar identidad, pagos, routing o media reales.
+> La validación PostgreSQL indicada es reproducible en CI y no equivale a staging o producción. Los endpoints `sandbox` y los adapters Mock siguen sin procesar identidad, pagos, routing o media reales. OAuth2/JWT ya valida tokens firmados de forma real, pero todavía no se ha seleccionado el proveedor OAuth2/OIDC de producción.
 
 ## Ejecutar módulos
 
@@ -99,6 +106,7 @@ export PGPASSWORD=tiempojusto
 psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/schema/TiempoJusto_PostgreSQL_Schema_V1_0.sql
 psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_1__geo_routing_eta.sql
 psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_2__webrtc_media.sql
+psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_3__oauth2_identity.sql
 
 mvn -B -f backend/pom.xml -DskipTests package
 SPRING_PROFILES_ACTIVE=dev java -jar backend/app/target/tiempojusto-app-1.0.0.jar
@@ -110,16 +118,27 @@ Health:
 curl http://localhost:8080/actuator/health
 ```
 
-El adapter temporal `X-TJ-Actor-Id` está deshabilitado por defecto. Solo para desarrollo controlado puede habilitarse con:
+El adapter temporal `X-TJ-Actor-Id` está deshabilitado por defecto y no se crea cuando OAuth2/JWT está habilitado. Solo para desarrollo controlado sin JWT puede activarse con:
 
 ```bash
 export TJ_AUTH_DEV_HEADER_ENABLED=true
 ```
 
+Para un proveedor OAuth2/OIDC real se configuran, como mínimo:
+
+```bash
+export TJ_AUTH_JWT_ENABLED=true
+export TJ_AUTH_JWT_ISSUER='https://issuer.example'
+export TJ_AUTH_JWT_AUDIENCE='tiempojusto-api'
+export TJ_AUTH_JWT_JWK_SET_URI='https://issuer.example/.well-known/jwks.json'
+```
+
+El refresh-token adapter se configura con el token endpoint del proveedor y nunca persiste el refresh token en `iam.oauth_identity`.
+
 ## Próximo hito
 
 Completar la vertical slice productiva sin inventar reglas pendientes:
 
-`OAuth/JWT -> application services restantes -> pause/reconnect/resume -> settlement/ledger persistente -> adapters reales de proveedores`.
+`OAuth provider real -> pause/reconnect/resume -> settlement/ledger persistente -> PaymentPort real -> WebRTC/TURN real -> frontend conectado`.
 
 La liquidación parcial que produzca una fracción no entera de CLP queda explícitamente bloqueada como `PENDING_ROUNDING_POLICY` hasta que producto congele la regla exacta de redondeo.
