@@ -1,0 +1,39 @@
+name: Geo Core
+
+on:
+  push:
+    paths:
+      - 'backend/geo/**'
+      - 'database/migrations/V1_1__geo_routing_eta.sql'
+      - 'docs/geo/**'
+      - '.github/workflows/geo.yml'
+  pull_request:
+    paths:
+      - 'backend/geo/**'
+      - 'database/migrations/V1_1__geo_routing_eta.sql'
+      - 'docs/geo/**'
+      - '.github/workflows/geo.yml'
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Run Geo contract tests
+        working-directory: backend/geo
+        run: bash run-tests.sh
+      - name: Static SQL assertions
+        run: |
+          grep -q "route_estimate_snapshot" database/migrations/V1_1__geo_routing_eta.sql
+          grep -q "duration_seconds > 1800" database/migrations/V1_1__geo_routing_eta.sql
+          grep -q "24 hours" database/migrations/V1_1__geo_routing_eta.sql
+          if sed -n '/CREATE TABLE IF NOT EXISTS geo.route_estimate_snapshot/,/);/p' database/migrations/V1_1__geo_routing_eta.sql | grep -Eqi "polyline|route_geometry|geography\(|geometry\("; then
+            echo "Route estimate table must not store route geometry" >&2
+            exit 1
+          fi
