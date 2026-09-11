@@ -2,7 +2,6 @@ package cl.tiempojusto.app.security;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
@@ -19,7 +18,6 @@ public class OAuthRefreshService {
     private final String clientSecret;
 
     public OAuthRefreshService(
-            RestClient.Builder restClientBuilder,
             @Value("${tiempojusto.auth.refresh.token-uri:}") String tokenUri,
             @Value("${tiempojusto.auth.refresh.client-id:}") String clientId,
             @Value("${tiempojusto.auth.refresh.client-secret:}") String clientSecret) {
@@ -29,7 +27,7 @@ public class OAuthRefreshService {
         if (clientId.isBlank()) {
             throw new IllegalStateException("TJ_AUTH_REFRESH_CLIENT_ID is required when refresh proxy is enabled");
         }
-        this.restClient = restClientBuilder.build();
+        this.restClient = RestClient.builder().build();
         this.tokenUri = tokenUri;
         this.clientId = clientId;
         this.clientSecret = clientSecret;
