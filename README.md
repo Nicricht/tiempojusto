@@ -4,7 +4,7 @@ Repositorio técnico del proyecto **TiempoJusto**.
 
 ## Estado actual
 
-TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repositorio contiene el schema PostgreSQL/PostGIS V1, máquinas de estado Java 21, Ledger financiero + PaymentPort Mock, OpenAPI REST V1, pruebas de contrato y workflows de CI.
+TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repositorio contiene el schema PostgreSQL/PostGIS V1, máquinas de estado Java 21, Ledger financiero + PaymentPort Mock, OpenAPI REST V1, WebSocket V1, pruebas de contrato y workflows de CI.
 
 ## Estructura principal
 
@@ -26,12 +26,18 @@ TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repos
   Contrato REST OpenAPI 3.1 del MVP, con endpoints, schemas, error model, auth scopes, idempotencia, paginación y rate limits.
 - `api/openapi/README.md`  
   Convenciones y trazabilidad del contrato HTTP.
+- `api/realtime/protocol.json`  
+  Protocolo WebSocket V1 machine-readable, con topics, autorización, secuencia, replay/resync, envelope y 27 eventos V1.7.
+- `api/realtime/README.md`  
+  Convenciones y trazabilidad del tiempo real.
 - `.github/workflows/state-machines.yml`  
   CI de State Machines con Java 21.
 - `.github/workflows/finance.yml`  
   CI del Finance Core con Java 21.
 - `.github/workflows/openapi.yml`  
   CI de validación del contrato OpenAPI.
+- `.github/workflows/realtime.yml`  
+  CI del contrato WebSocket V1.
 
 ## Estado de hitos
 
@@ -45,8 +51,9 @@ TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repos
 | Ledger + PaymentPort Mock | ✅ implementado |
 | Contract tests Finance | ✅ 22/22 local |
 | OpenAPI REST V1 | ✅ implementado |
+| WebSocket V1 | ✅ implementado |
 | GitHub Actions | ✅ configurado |
-| WebSocket | ⏭️ siguiente |
+| Geo / routing / ETA | ⏭️ siguiente |
 | UX / wireframes | pendiente |
 | Integración de proveedores reales | pendiente |
 | E2E / staging / piloto | pendiente |
@@ -85,6 +92,12 @@ cd backend/finance
 npx --yes @redocly/cli@1.34.5 lint api/openapi/openapi.yaml --extends=minimal
 ```
 
+## Validar WebSocket V1
+
+```bash
+python api/realtime/validate_protocol.py
+```
+
 ## Ejecutar schema PostgreSQL
 
 Desde `database/schema/` con `psql`:
@@ -97,4 +110,4 @@ El loader usa `\ir` para cargar los fragmentos de `parts/` en el orden correcto.
 
 ## Próximo hito
 
-**WebSocket V1**, para congelar topics por Auction/Session/User/Live, permisos, secuencia, replay corto, resync y versionado de eventos.
+**P1.3 Geo**, para congelar celdas aproximadas, PostGIS, routing/ETA y separación entre ubicación pública y privada sin tracking continuo.
