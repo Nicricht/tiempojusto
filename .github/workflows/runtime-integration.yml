@@ -58,16 +58,16 @@ jobs:
       - name: Execute physical schema V1.0
         run: psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/schema/TiempoJusto_PostgreSQL_Schema_V1_0.sql
 
-      - name: Execute Geo migration V1.1
-        run: psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_1__geo_routing_eta.sql
-
-      - name: Execute Media migration V1.2
-        run: psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_2__webrtc_media.sql
+      - name: Execute migrations V1.1 through V1.5
+        run: |
+          for f in database/migrations/V1_1__geo_routing_eta.sql database/migrations/V1_2__webrtc_media.sql database/migrations/V1_3__oauth2_identity.sql database/migrations/V1_4__online_reconnect_persistence.sql database/migrations/V1_5__persistent_session_settlement.sql; do
+            psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f "$f"
+          done
 
       - name: Assert critical database objects
         run: |
           test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from pg_extension where extname in ('postgis','pgcrypto','citext')")" = "3"
-          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from (values ('iam.app_user'),('market.proposal'),('auction.auction'),('appointment.appointment_session'),('finance.ledger_entry'),('finance.payout'),('geo.route_estimate_snapshot'),('media.video_participant_state')) r(name) where to_regclass(name) is not null")" = "8"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from (values ('iam.app_user'),('market.proposal'),('auction.auction'),('appointment.appointment_session'),('finance.ledger_entry'),('finance.payout'),('finance.session_settlement'),('finance.payout_hold'),('geo.route_estimate_snapshot'),('media.video_participant_state')) r(name) where to_regclass(name) is not null")" = "10"
           psql -h localhost -U tiempojusto -d tiempojusto -Atc "select postgis_version();"
 
       - name: Build all Java modules and integrated Spring Boot app
