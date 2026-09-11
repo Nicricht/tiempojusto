@@ -4,7 +4,7 @@ Repositorio técnico del proyecto **TiempoJusto**.
 
 ## Estado actual
 
-TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repositorio contiene el schema PostgreSQL/PostGIS V1, máquinas de estado Java 21, Ledger financiero + PaymentPort Mock, pruebas de contrato y workflows de CI.
+TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repositorio contiene el schema PostgreSQL/PostGIS V1, máquinas de estado Java 21, Ledger financiero + PaymentPort Mock, OpenAPI REST V1, pruebas de contrato y workflows de CI.
 
 ## Estructura principal
 
@@ -22,10 +22,16 @@ TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repos
   Contract tests de reservas, capture, refund, settlement, hold, payout y chargebacks.
 - `docs/finance/LEDGER_PAYMENTPORT_V1.md`  
   Trazabilidad de las reglas financieras V1.7 y decisiones técnicas explícitas.
+- `api/openapi/openapi.yaml`  
+  Contrato REST OpenAPI 3.1 del MVP, con endpoints, schemas, error model, auth scopes, idempotencia, paginación y rate limits.
+- `api/openapi/README.md`  
+  Convenciones y trazabilidad del contrato HTTP.
 - `.github/workflows/state-machines.yml`  
   CI de State Machines con Java 21.
 - `.github/workflows/finance.yml`  
   CI del Finance Core con Java 21.
+- `.github/workflows/openapi.yml`  
+  CI de validación del contrato OpenAPI.
 
 ## Estado de hitos
 
@@ -38,9 +44,9 @@ TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repos
 | Contract tests State Machines | ✅ 34/34 |
 | Ledger + PaymentPort Mock | ✅ implementado |
 | Contract tests Finance | ✅ 22/22 local |
+| OpenAPI REST V1 | ✅ implementado |
 | GitHub Actions | ✅ configurado |
-| OpenAPI | ⏭️ siguiente |
-| WebSocket | pendiente |
+| WebSocket | ⏭️ siguiente |
 | UX / wireframes | pendiente |
 | Integración de proveedores reales | pendiente |
 | E2E / staging / piloto | pendiente |
@@ -73,6 +79,12 @@ cd backend/finance
 .\run-tests.ps1
 ```
 
+## Validar OpenAPI
+
+```bash
+npx --yes @redocly/cli@1.34.5 lint api/openapi/openapi.yaml --extends=minimal
+```
+
 ## Ejecutar schema PostgreSQL
 
 Desde `database/schema/` con `psql`:
@@ -85,4 +97,4 @@ El loader usa `\ir` para cargar los fragmentos de `parts/` en el orden correcto.
 
 ## Próximo hito
 
-**OpenAPI REST V1**, para convertir las reglas ya ejecutables en contratos HTTP explícitos entre frontend y backend, incluyendo idempotencia, errores, permisos y recursos financieros.
+**WebSocket V1**, para congelar topics por Auction/Session/User/Live, permisos, secuencia, replay corto, resync y versionado de eventos.
