@@ -1,3 +1,12 @@
+
+CREATE TABLE iam.identity_verification (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE CASCADE,
+    provider_code varchar(50) NOT NULL,
+    provider_reference varchar(160) NOT NULL UNIQUE,
+    status platform.verification_status NOT NULL,
+    verified_adult boolean NOT NULL DEFAULT false,
+    legal_country_code char(2),
     date_of_birth date,
     verified_at timestamptz,
     expires_at timestamptz,
@@ -165,16 +174,3 @@ CREATE TABLE market.proposal (
     ),
     CONSTRAINT proposal_cooldown_ck CHECK (cooldown_until IS NULL OR withdrawn_at IS NULL OR cooldown_until >= withdrawn_at + interval '24 hours')
 );
-
-CREATE UNIQUE INDEX proposal_one_active_uidx
-ON market.proposal(bidder_user_id, host_profile_id, modality, duration_minutes)
-WHERE status = 'ACTIVE';
-
-CREATE TRIGGER proposal_set_updated_at
-BEFORE UPDATE ON market.proposal
-FOR EACH ROW EXECUTE FUNCTION platform.set_updated_at();
-
-CREATE TABLE market.proposal_metric_snapshot (
-    id bigserial PRIMARY KEY,
-    host_profile_id uuid NOT NULL REFERENCES profile.host_profile(id) ON DELETE CASCADE,
-    modality platform.modality NOT NULL,
