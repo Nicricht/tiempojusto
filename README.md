@@ -4,7 +4,7 @@ Repositorio técnico del proyecto **TiempoJusto**.
 
 ## Estado actual
 
-TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repositorio contiene el schema PostgreSQL/PostGIS V1, máquinas de estado Java 21, Ledger financiero + PaymentPort Mock, OpenAPI REST V1, WebSocket V1, Geo/ETA V1, pruebas de contrato y workflows de CI.
+TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repositorio contiene el schema PostgreSQL/PostGIS V1, máquinas de estado Java 21, Ledger financiero + PaymentPort Mock, OpenAPI REST V1, WebSocket V1, Geo/ETA V1, WebRTC/Media V1, pruebas de contrato y workflows de CI.
 
 ## Estructura principal
 
@@ -14,6 +14,8 @@ TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repos
   9 fragmentos que, en orden, reconstruyen el artefacto SQL original.
 - `database/migrations/V1_1__geo_routing_eta.sql`  
   Migración P1.3 para privacidad geográfica, ETA y elegibilidad presencial.
+- `database/migrations/V1_2__webrtc_media.sql`  
+  Migración P1.4 para estado de media, cámara válida, no grabación, incidents y reconexión.
 - `backend/state-machines/src/main/java/`  
   Máquinas de estado Java 21.
 - `backend/state-machines/src/test/java/`  
@@ -26,10 +28,16 @@ TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repos
   Geo Core Java 21 con PublicCellService, RoutingPort, MockRoutingPort, privacidad y validación ETA.
 - `backend/geo/src/test/java/`  
   Contract tests de Geo P1.3.
+- `backend/media/src/main/java/`  
+  Media Core Java 21 con WebRtcPort, MockWebRtcPort, room lifecycle, TURN, camera validity y reconnect.
+- `backend/media/src/test/java/`  
+  Contract tests de Online/Live P1.4.
 - `docs/finance/LEDGER_PAYMENTPORT_V1.md`  
   Trazabilidad de las reglas financieras V1.7 y decisiones técnicas explícitas.
 - `docs/geo/GEO_ROUTING_ETA_V1.md`  
   Trazabilidad P1.3, privacidad, PostGIS, routing y decisiones técnicas.
+- `docs/media/WEBRTC_MEDIA_V1.md`  
+  Trazabilidad P1.4, Online/Live, TURN, heartbeat, cámara y reconexión.
 - `api/openapi/openapi.yaml`  
   Contrato REST OpenAPI 3.1 del MVP, con endpoints, schemas, error model, auth scopes, idempotencia, paginación y rate limits.
 - `api/realtime/protocol.json`  
@@ -44,6 +52,8 @@ TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repos
   CI del contrato WebSocket V1.
 - `.github/workflows/geo.yml`  
   CI de Geo Core y aserciones estáticas sobre la migración P1.3.
+- `.github/workflows/media.yml`  
+  CI de Media Core y aserciones estáticas sobre la migración P1.4.
 
 ## Estado de hitos
 
@@ -60,9 +70,11 @@ TiempoJusto ya pasó de definición funcional a ingeniería ejecutable. El repos
 | WebSocket V1 | ✅ implementado |
 | Geo / routing / ETA V1 | ✅ implementado |
 | Contract tests Geo | ✅ 12/12 local |
+| WebRTC / Media V1 | ✅ implementado |
+| Contract tests Media | ✅ 17/17 local |
 | GitHub Actions | ✅ configurado |
-| WebRTC / TURN | ⏭️ siguiente |
-| UX / wireframes | pendiente |
+| UX / wireframes | ⏭️ siguiente |
+| Admin / HumanReviewQueue | pendiente |
 | Integración de proveedores reales | pendiente |
 | E2E / staging / piloto | pendiente |
 
@@ -101,6 +113,13 @@ cd backend/geo
 bash run-tests.sh
 ```
 
+## Ejecutar Media Core
+
+```bash
+cd backend/media
+bash run-tests.sh
+```
+
 ## Validar OpenAPI
 
 ```bash
@@ -120,8 +139,11 @@ Desde `database/schema/` con `psql`:
 ```bash
 psql -d tiempojusto -f TiempoJusto_PostgreSQL_Schema_V1_0.sql
 psql -d tiempojusto -f ../migrations/V1_1__geo_routing_eta.sql
+psql -d tiempojusto -f ../migrations/V1_2__webrtc_media.sql
 ```
+
+Las migraciones nuevas aún requieren ejecución real contra PostgreSQL 16 + PostGIS antes de considerarse físicamente validadas.
 
 ## Próximo hito
 
-**P1.4 WebRTC**, para congelar lifecycle de sala, TURN, media heartbeat, camera validity y reconnect events de Online/Live.
+**P2.1 Wireframes / UX**, para convertir las reglas congeladas en flujos navegables de onboarding, Home/mapa, filtros, perfil, Proposal, Meta, Auction, Live, Winner, presencial, Online, Wallet y Safety.
