@@ -1,0 +1,94 @@
+name: Persistent Settlement Integration
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/**'
+      - 'backend/finance/**'
+      - 'database/**'
+      - 'docs/runtime/PERSISTENT_SETTLEMENT_LEDGER_V1.md'
+      - '.github/workflows/settlement-integration.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/app/**'
+      - 'backend/finance/**'
+      - 'database/**'
+      - '.github/workflows/settlement-integration.yml'
+
+jobs:
+  settlement-ledger:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_DB: tiempojusto
+          POSTGRES_USER: tiempojusto
+          POSTGRES_PASSWORD: tiempojusto
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U tiempojusto -d tiempojusto"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGPASSWORD: tiempojusto
+      TJ_DB_URL: jdbc:postgresql://localhost:5432/tiempojusto
+      TJ_DB_USER: tiempojusto
+      TJ_DB_PASSWORD: tiempojusto
+      TJ_AUTH_DEV_HEADER_ENABLED: 'true'
+      SPRING_PROFILES_ACTIVE: ci
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Load database through V1.5
+        run: |
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/schema/TiempoJusto_PostgreSQL_Schema_V1_0.sql
+          for f in database/migrations/V1_1__geo_routing_eta.sql database/migrations/V1_2__webrtc_media.sql database/migrations/V1_3__oauth2_identity.sql database/migrations/V1_4__online_reconnect_persistence.sql database/migrations/V1_5__persistent_session_settlement.sql; do
+            psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f "$f"
+          done
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from pg_class where oid='finance.session_settlement'::regclass")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from pg_class where oid='finance.payout_hold'::regclass")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from pg_indexes where indexname in ('ledger_non_user_account_uidx','ledger_one_session_settlement_uidx','payout_source_transaction_uidx','one_active_payout_hold_uidx')")" = "4"
+      - name: Build runtime
+        run: mvn -B -f backend/pom.xml -DskipTests package
+      - name: Start runtime
+        run: |
+          java -jar backend/app/target/tiempojusto-app-1.0.0.jar > /tmp/tiempojusto-settlement.log 2>&1 &
+          for i in $(seq 1 40); do
+            if curl -fsS http://localhost:8080/actuator/health > /tmp/health.json; then exit 0; fi
+            sleep 2
+          done
+          cat /tmp/tiempojusto-settlement.log
+          exit 1
+      - name: Execute persistent settlement golden path
+        run: |
+          curl -fsS -X POST http://localhost:8080/internal/ci/golden-path/settlement > /tmp/settlement.json
+          cat /tmp/settlement.json
+          grep -q '"status":"PASS"' /tmp/settlement.json
+          grep -q '"grossAmountClp":60000' /tmp/settlement.json
+          grep -q '"hostAmountClp":48000' /tmp/settlement.json
+          grep -q '"platformAmountClp":12000' /tmp/settlement.json
+          grep -q '"payoutStatus":"AVAILABLE"' /tmp/settlement.json
+          grep -q '"hostAvailableClp":48000' /tmp/settlement.json
+          grep -q '"objectiveHoldBlockedRelease":true' /tmp/settlement.json
+          grep -q '"zeroBillingStatus":"ZERO_BILLING"' /tmp/settlement.json
+          grep -q '"roundingPolicyStatus":"PENDING_ROUNDING_POLICY"' /tmp/settlement.json
+      - name: Assert persistent ledger invariants
+        run: |
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from finance.session_settlement where status='POSTED' and generated_amount_clp=60000 and host_net_clp=48000 and platform_fee_clp=12000")" -ge "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from finance.session_settlement where status='ZERO_BILLING' and generated_amount_clp=0")" -ge "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from finance.session_settlement where status='PENDING_ROUNDING_POLICY' and ledger_transaction_id is null")" -ge "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from finance.payout where status='AVAILABLE' and net_amount_clp=48000")" -ge "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from finance.payout_hold where status='RELEASED' and reason_code='CI_OBJECTIVE_INCIDENT'")" -ge "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from finance.ledger_transaction t where t.status='POSTED' and not exists (select 1 from (select transaction_id, coalesce(sum(amount_clp) filter(where direction='DEBIT'),0) d, coalesce(sum(amount_clp) filter(where direction='CREDIT'),0) c from finance.ledger_entry group by transaction_id) x where x.transaction_id=t.id and x.d=x.c and x.d>0)")" = "0"
+      - name: Print runtime log on failure
+        if: failure()
+        run: cat /tmp/tiempojusto-settlement.log || true
