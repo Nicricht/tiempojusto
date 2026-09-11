@@ -22,3 +22,5 @@ management:
 tiempojusto:
   runtime:
     verify-database: ${TJ_VERIFY_DATABASE:true}
+  auth:
+    dev-header-enabled: ${TJ_AUTH_DEV_HEADER_ENABLED:false}
