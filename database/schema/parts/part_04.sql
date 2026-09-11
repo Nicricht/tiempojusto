@@ -1,4 +1,43 @@
 
+CREATE TABLE appointment.meeting_handshake (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    appointment_id uuid NOT NULL UNIQUE REFERENCES appointment.appointment(id) ON DELETE CASCADE,
+    token_hash text NOT NULL UNIQUE,
+    host_confirmed_at timestamptz,
+    bidder_confirmed_at timestamptz,
+    completed_at timestamptz,
+    expires_at timestamptz NOT NULL,
+    status platform.handshake_status NOT NULL DEFAULT 'PENDING',
+    CONSTRAINT handshake_bilateral_ck CHECK (
+        completed_at IS NULL OR (host_confirmed_at IS NOT NULL AND bidder_confirmed_at IS NOT NULL)
+    ),
+    CONSTRAINT handshake_completed_state_ck CHECK (
+        status <> 'COMPLETED' OR completed_at IS NOT NULL
+    )
+);
+
+CREATE TABLE appointment.appointment_session (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    appointment_id uuid NOT NULL UNIQUE REFERENCES appointment.appointment(id) ON DELETE CASCADE,
+    session_mode platform.modality NOT NULL,
+    status platform.session_status NOT NULL DEFAULT 'WAITING',
+    free_started_at timestamptz,
+    free_ends_at timestamptz,
+    paid_started_at timestamptz,
+    ended_at timestamptz,
+    billable_seconds integer NOT NULL DEFAULT 0 CHECK (billable_seconds >= 0),
+    lock_version integer NOT NULL DEFAULT 0 CHECK (lock_version >= 0),
+    CONSTRAINT session_free_duration_ck CHECK (
+        free_ends_at IS NULL OR (
+            free_started_at IS NOT NULL AND (
+                (session_mode = 'IN_PERSON' AND free_ends_at = free_started_at + interval '5 minutes') OR
+                (session_mode = 'ONLINE' AND free_ends_at = free_started_at + interval '2 minutes')
+            )
+        )
+    ),
+    CONSTRAINT session_end_ck CHECK (ended_at IS NULL OR free_started_at IS NULL OR ended_at >= free_started_at)
+);
+
 CREATE TABLE appointment.session_segment (
     id bigserial PRIMARY KEY,
     session_id uuid NOT NULL REFERENCES appointment.appointment_session(id) ON DELETE CASCADE,
@@ -126,55 +165,3 @@ CREATE TABLE media.video_room (
     CONSTRAINT video_join_3m_ck CHECK (join_deadline = created_at + interval '3 minutes'),
     CONSTRAINT video_reconnect_2m_ck CHECK (reconnect_deadline IS NULL OR (media_lost_at IS NOT NULL AND reconnect_deadline = media_lost_at + interval '2 minutes'))
 );
-
-CREATE TABLE media.video_participant_event (
-    id bigserial PRIMARY KEY,
-    video_room_id uuid NOT NULL REFERENCES media.video_room(id) ON DELETE CASCADE,
-    user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE RESTRICT,
-    event_type varchar(40) NOT NULL,
-    server_at timestamptz NOT NULL DEFAULT now(),
-    metadata jsonb
-);
-
-CREATE OR REPLACE FUNCTION media.assert_online_free_window()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-DECLARE v_started timestamptz;
-BEGIN
-    IF NEW.free_online_end IS NULL THEN
-        RETURN NEW;
-    END IF;
-    SELECT free_started_at INTO v_started
-      FROM appointment.appointment_session
-     WHERE appointment_id = NEW.appointment_id;
-    IF v_started IS NOT NULL AND NEW.free_online_end <> v_started + interval '2 minutes' THEN
-        RAISE EXCEPTION 'FREE_ONLINE must be exactly 2 minutes';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER online_free_window_guard
-BEFORE INSERT OR UPDATE OF free_online_end ON media.video_room
-FOR EACH ROW EXECUTE FUNCTION media.assert_online_free_window();
-
--- --------------------------------------------------------------------------
--- 10. Finance / ledger
--- --------------------------------------------------------------------------
-CREATE TABLE finance.ledger_account (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    owner_type platform.ledger_owner_type NOT NULL,
-    owner_user_id uuid REFERENCES iam.app_user(id) ON DELETE RESTRICT,
-    account_type platform.ledger_account_type NOT NULL,
-    currency char(3) NOT NULL DEFAULT 'CLP',
-    created_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT ledger_currency_ck CHECK (currency = 'CLP'),
-    CONSTRAINT ledger_owner_ck CHECK (
-        (owner_type = 'USER' AND owner_user_id IS NOT NULL)
-        OR (owner_type <> 'USER' AND owner_user_id IS NULL)
-    ),
-    UNIQUE (owner_type, owner_user_id, account_type, currency)
-);
-
-CREATE TABLE finance.ledger_transaction (
