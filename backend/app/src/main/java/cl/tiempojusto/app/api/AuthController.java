@@ -3,7 +3,7 @@ package cl.tiempojusto.app.api;
 import cl.tiempojusto.app.security.ActorContext;
 import cl.tiempojusto.app.security.OAuthRefreshService;
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
@@ -24,11 +24,10 @@ import java.util.UUID;
 public class AuthController {
     private final ActorContext actors;
     private final JdbcTemplate jdbc;
-    private final OAuthRefreshService refreshService;
+    private final ObjectProvider<OAuthRefreshService> refreshService;
 
     public AuthController(ActorContext actors, JdbcTemplate jdbc,
-                          @org.springframework.beans.factory.annotation.Autowired(required = false)
-                          OAuthRefreshService refreshService) {
+                          ObjectProvider<OAuthRefreshService> refreshService) {
         this.actors = actors;
         this.jdbc = jdbc;
         this.refreshService = refreshService;
@@ -50,7 +49,8 @@ public class AuthController {
 
     @PostMapping(value = "/refresh", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<String> refresh(@RequestBody RefreshRequest request) {
-        if (refreshService == null) {
+        OAuthRefreshService service = refreshService.getIfAvailable();
+        if (service == null) {
             throw ApiProblem.unavailable("REFRESH_ADAPTER_NOT_CONFIGURED",
                     "El intercambio de refresh token no está configurado.");
         }
@@ -58,7 +58,7 @@ public class AuthController {
             throw ApiProblem.badRequest("REFRESH_TOKEN_REQUIRED", "refreshToken es obligatorio.");
         }
 
-        OAuthRefreshService.ProviderResponse provider = refreshService.refresh(request.refreshToken());
+        OAuthRefreshService.ProviderResponse provider = service.refresh(request.refreshToken());
         return ResponseEntity.status(HttpStatusCode.valueOf(provider.statusCode()))
                 .contentType(MediaType.APPLICATION_JSON)
                 .cacheControl(CacheControl.noStore())
