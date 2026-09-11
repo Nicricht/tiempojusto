@@ -4,9 +4,9 @@ Repositorio técnico del proyecto **TiempoJusto**.
 
 ## Estado actual
 
-TiempoJusto ya pasó de definición funcional a una primera integración ejecutable. El repositorio contiene schema PostgreSQL/PostGIS V1, máquinas de estado Java 21, Ledger financiero + PaymentPort Mock, OpenAPI REST V1, WebSocket V1, Geo/ETA V1, WebRTC/Media V1, wireframes UX P2.1 y un runtime Spring Boot que enlaza los módulos principales.
+TiempoJusto ya pasó de definición funcional a una primera integración ejecutable. El repositorio contiene schema PostgreSQL/PostGIS V1, máquinas de estado Java 21, Ledger financiero + PaymentPort Mock, OpenAPI REST V1, WebSocket V1, Geo/ETA V1, WebRTC/Media V1, wireframes UX P2.1, un runtime Spring Boot integrado y un Golden Path Online sandbox ejecutado por CI.
 
-El workflow `Runtime Integration` ejecuta el schema físico y las migraciones sobre PostgreSQL 16 + PostGIS real en CI, compila el reactor Java completo, inicia el JAR integrado y exige `/actuator/health = UP`.
+El workflow `Runtime Integration` ejecuta el schema físico y las migraciones sobre PostgreSQL 16 + PostGIS real en CI, compila el reactor Java completo, inicia el JAR integrado, exige `/actuator/health = UP` y recorre el Golden Path Online sandbox vía HTTP.
 
 ## Estructura principal
 
@@ -19,7 +19,7 @@ El workflow `Runtime Integration` ejecuta el schema físico y las migraciones so
 - `backend/pom.xml`
   Reactor Maven para State Machines, Finance, Geo, Media y la aplicación integrada.
 - `backend/app/`
-  Runtime Spring Boot Java 21 con datasource PostgreSQL, health y verificación fail-fast del schema.
+  Runtime Spring Boot Java 21 con datasource PostgreSQL, health, verificación fail-fast del schema y harness Online sandbox.
 - `backend/state-machines/`
   Máquinas de estado Java 21 y 34 contract tests.
 - `backend/finance/`
@@ -36,6 +36,8 @@ El workflow `Runtime Integration` ejecuta el schema físico y las migraciones so
   Trazabilidad de los wireframes P2.1 y enlace al archivo Figma editable.
 - `docs/runtime/RUNTIME_INTEGRATION_V1.md`
   Ejecución local, límites de los adapters mock y alcance de la integración runtime V1.
+- `docs/runtime/GOLDEN_PATH_ONLINE_V1.md`
+  Vertical slice Online sandbox y sus invariantes verificadas por CI.
 
 ## Wireframes UX P2.1
 
@@ -59,8 +61,9 @@ Incluye onboarding/KYC, discovery, mapa aproximado, perfil, Proposal, Disponible
 | WebRTC / Media V1 | ✅ 17/17 tests |
 | UX / wireframes P2.1 | ✅ Figma V1 |
 | Runtime Spring Boot integrado V1 | ✅ CI ejecutable |
+| Golden Path Online sandbox | ✅ CI end-to-end entre módulos |
 | GitHub Actions | ✅ configurado |
-| Golden Path Online E2E | ⏭️ siguiente |
+| Golden Path persistente + endpoints reales | ⏭️ siguiente |
 | KYC real | pendiente |
 | PaymentPort / payouts reales | pendiente |
 | Routing/ETA real | pendiente |
@@ -70,7 +73,7 @@ Incluye onboarding/KYC, discovery, mapa aproximado, perfil, Proposal, Disponible
 | E2E / security / observability | pendiente |
 | Staging / piloto | pendiente |
 
-> La validación PostgreSQL indicada arriba es una validación reproducible de CI, no equivale todavía a staging ni producción.
+> La validación PostgreSQL indicada arriba es una validación reproducible de CI, no equivale todavía a staging ni producción. El Golden Path actual usa adapters sandbox/mock y no procesa dinero real.
 
 ## Ejecutar módulos
 
@@ -92,7 +95,7 @@ psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/m
 psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_2__webrtc_media.sql
 
 mvn -B -f backend/pom.xml -DskipTests package
-java -jar backend/app/target/tiempojusto-app-1.0.0.jar
+SPRING_PROFILES_ACTIVE=dev java -jar backend/app/target/tiempojusto-app-1.0.0.jar
 ```
 
 Health:
@@ -101,10 +104,18 @@ Health:
 curl http://localhost:8080/actuator/health
 ```
 
+Golden Path sandbox:
+
+```bash
+curl -X POST http://localhost:8080/internal/sandbox/golden-path/online \
+  -H 'Content-Type: application/json' \
+  -d '{"amountClp":60000,"durationMinutes":30}'
+```
+
 ## Próximo hito
 
-**Golden Path Online E2E**, priorizando un único flujo ejecutable de extremo a extremo:
+Convertir el Golden Path sandbox en **application services y endpoints persistentes reales**, manteniendo el mismo recorrido:
 
-`registro -> KYC -> Proposal -> Auction -> reserva de fondos -> Online -> FREE_ONLINE -> aceptación bilateral -> PAID_ACTIVE -> settlement -> hold -> payout`.
+`registro/KYC -> Proposal -> Auction -> reserva de fondos -> Online -> FREE_ONLINE -> aceptación bilateral -> PAID_ACTIVE -> settlement -> hold -> payout`.
 
 Los adapters `MockPaymentPort`, `MockRoutingPort` y `MockWebRtcPort` siguen siendo exclusivamente de desarrollo/CI y no representan proveedores reales de producción.
