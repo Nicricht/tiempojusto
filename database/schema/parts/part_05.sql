@@ -1,3 +1,55 @@
+
+CREATE TABLE media.video_participant_event (
+    id bigserial PRIMARY KEY,
+    video_room_id uuid NOT NULL REFERENCES media.video_room(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE RESTRICT,
+    event_type varchar(40) NOT NULL,
+    server_at timestamptz NOT NULL DEFAULT now(),
+    metadata jsonb
+);
+
+CREATE OR REPLACE FUNCTION media.assert_online_free_window()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE v_started timestamptz;
+BEGIN
+    IF NEW.free_online_end IS NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT free_started_at INTO v_started
+      FROM appointment.appointment_session
+     WHERE appointment_id = NEW.appointment_id;
+    IF v_started IS NOT NULL AND NEW.free_online_end <> v_started + interval '2 minutes' THEN
+        RAISE EXCEPTION 'FREE_ONLINE must be exactly 2 minutes';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER online_free_window_guard
+BEFORE INSERT OR UPDATE OF free_online_end ON media.video_room
+FOR EACH ROW EXECUTE FUNCTION media.assert_online_free_window();
+
+-- --------------------------------------------------------------------------
+-- 10. Finance / ledger
+-- --------------------------------------------------------------------------
+CREATE TABLE finance.ledger_account (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_type platform.ledger_owner_type NOT NULL,
+    owner_user_id uuid REFERENCES iam.app_user(id) ON DELETE RESTRICT,
+    account_type platform.ledger_account_type NOT NULL,
+    currency char(3) NOT NULL DEFAULT 'CLP',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT ledger_currency_ck CHECK (currency = 'CLP'),
+    CONSTRAINT ledger_owner_ck CHECK (
+        (owner_type = 'USER' AND owner_user_id IS NOT NULL)
+        OR (owner_type <> 'USER' AND owner_user_id IS NULL)
+    ),
+    UNIQUE (owner_type, owner_user_id, account_type, currency)
+);
+
+CREATE TABLE finance.ledger_transaction (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     transaction_type platform.ledger_tx_type NOT NULL,
     reference_type varchar(40) NOT NULL,
@@ -116,65 +168,3 @@ $$;
 CREATE TRIGGER payout_hold_guard
 BEFORE INSERT OR UPDATE OF source_transaction_id, pending_until ON finance.payout
 FOR EACH ROW EXECUTE FUNCTION finance.guard_payout_hold();
-
-CREATE TABLE finance.payment_dispute (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    provider_reference varchar(160) NOT NULL UNIQUE,
-    user_id uuid REFERENCES iam.app_user(id) ON DELETE SET NULL,
-    appointment_id uuid REFERENCES appointment.appointment(id) ON DELETE SET NULL,
-    amount_clp bigint NOT NULL CHECK (amount_clp > 0),
-    status platform.dispute_status NOT NULL,
-    opened_at timestamptz NOT NULL,
-    closed_at timestamptz,
-    evidence_bundle_ref text,
-    CONSTRAINT dispute_window_ck CHECK (closed_at IS NULL OR closed_at >= opened_at)
-);
-
-COMMENT ON TABLE finance.payment_dispute IS
-'V1.7: a chargeback does not automatically create debt for a compliant HOST. Recovery requires objective/audited grounds.';
-
-CREATE TABLE finance.penalty (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE RESTRICT,
-    appointment_id uuid REFERENCES appointment.appointment(id) ON DELETE SET NULL,
-    amount_clp bigint NOT NULL CHECK (amount_clp >= 0),
-    reason_code varchar(50) NOT NULL,
-    transaction_id uuid REFERENCES finance.ledger_transaction(id) ON DELETE RESTRICT,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE finance.compensation (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    beneficiary_user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE RESTRICT,
-    appointment_id uuid REFERENCES appointment.appointment(id) ON DELETE SET NULL,
-    amount_clp bigint NOT NULL CHECK (amount_clp >= 0),
-    reason_code varchar(50) NOT NULL,
-    transaction_id uuid REFERENCES finance.ledger_transaction(id) ON DELETE RESTRICT,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-
--- --------------------------------------------------------------------------
--- 11. Safety / Risk / Appeals
--- --------------------------------------------------------------------------
-CREATE TABLE safety.report (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    reporter_user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE RESTRICT,
-    reported_user_id uuid REFERENCES iam.app_user(id) ON DELETE SET NULL,
-    appointment_id uuid REFERENCES appointment.appointment(id) ON DELETE SET NULL,
-    category varchar(50) NOT NULL,
-    description text,
-    status platform.report_status NOT NULL DEFAULT 'OPEN',
-    created_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT report_not_self_ck CHECK (reported_user_id IS NULL OR reported_user_id <> reporter_user_id)
-);
-
-CREATE TABLE safety.safety_case (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    subject_user_id uuid NOT NULL REFERENCES iam.app_user(id) ON DELETE RESTRICT,
-    report_id uuid REFERENCES safety.report(id) ON DELETE SET NULL,
-    severity platform.safety_level NOT NULL,
-    decision_status platform.case_decision_status NOT NULL DEFAULT 'OPEN',
-    action_code varchar(50),
-    reversible boolean NOT NULL,
-    decided_at timestamptz,
-    appeal_deadline timestamptz,
