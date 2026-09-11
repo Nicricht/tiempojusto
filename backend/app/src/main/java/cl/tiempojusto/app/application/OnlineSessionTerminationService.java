@@ -143,10 +143,15 @@ public class OnlineSessionTerminationService {
     }
 
     private static String settlementState(long amountClp, int durationMinutes, int billableSeconds) {
+        if (billableSeconds <= 0) return "READY_FOR_SETTLEMENT";
         long fullSeconds = (long) durationMinutes * 60L;
-        if (billableSeconds >= fullSeconds) return "READY_FOR_SETTLEMENT";
         long numerator = Math.multiplyExact(amountClp, billableSeconds);
-        return numerator % fullSeconds == 0 ? "READY_FOR_SETTLEMENT" : "PENDING_ROUNDING_POLICY";
+        if (numerator % fullSeconds != 0) return "PENDING_ROUNDING_POLICY";
+        long generatedAmountClp = numerator / fullSeconds;
+        long hostShareNumerator = Math.multiplyExact(generatedAmountClp, 80L);
+        return hostShareNumerator % 100L == 0
+                ? "READY_FOR_SETTLEMENT"
+                : "PENDING_ROUNDING_POLICY";
     }
 
     private record SessionContext(UUID id, UUID appointmentId, String status,

@@ -65,12 +65,15 @@ public class ReconnectGoldenPathService {
         var mediaOk = new OnlineApplicationService.JoinRequest(true, true, false);
         online.join(host.userId(), sessionId, mediaOk);
         online.join(bidder.userId(), sessionId, mediaOk);
+
+        Instant freeEndAt = Instant.now();
+        Instant freeStartAt = freeEndAt.minusSeconds(120);
         jdbc.update("""
                 update appointment.appointment_session
-                   set free_started_at = clock_timestamp() - interval '2 minutes',
-                       free_ends_at = clock_timestamp()
+                   set free_started_at = ?,
+                       free_ends_at = ?
                  where id = ?
-                """, sessionId);
+                """, Timestamp.from(freeStartAt), Timestamp.from(freeEndAt), sessionId);
         jdbc.update("""
                 update media.video_room vr
                    set free_online_end = s.free_ends_at
@@ -118,12 +121,14 @@ public class ReconnectGoldenPathService {
         require("RECONNECTING".equals(interruptedAgain.sessionStatus()),
                 "Second interruption must enter RECONNECTING");
 
+        Instant reconnectDeadline = Instant.now();
+        Instant mediaLostAt = reconnectDeadline.minusSeconds(120);
         jdbc.update("""
                 update media.video_room
-                   set media_lost_at = clock_timestamp() - interval '2 minutes',
-                       reconnect_deadline = clock_timestamp()
+                   set media_lost_at = ?,
+                       reconnect_deadline = ?
                  where id = ?
-                """, roomId);
+                """, Timestamp.from(mediaLostAt), Timestamp.from(reconnectDeadline), roomId);
         var timedOut = reconnect.evaluate(sessionId);
         require("ENDED".equals(timedOut.sessionStatus()),
                 "Expired reconnect window must end the session");
