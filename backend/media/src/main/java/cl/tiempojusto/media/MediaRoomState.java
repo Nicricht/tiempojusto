@@ -1,0 +1,2 @@
+package cl.tiempojusto.media;
+public enum MediaRoomState { JOIN_WINDOW, READY_FOR_FREE, PAID_ACTIVE, RECONNECTING, RECOVERED_AWAITING_BILATERAL_RESUME, LIVE, ENDED }
