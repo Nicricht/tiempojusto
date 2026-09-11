@@ -89,6 +89,20 @@ jobs:
       - name: Assert application health
         run: grep -q '"status":"UP"' /tmp/health.json
 
+      - name: Execute Online Golden Path sandbox
+        run: |
+          curl -fsS -X POST http://localhost:8080/internal/sandbox/golden-path/online \
+            -H 'Content-Type: application/json' \
+            -d '{"amountClp":60000,"durationMinutes":30}' > /tmp/golden-path.json
+          cat /tmp/golden-path.json
+          grep -q '"status":"PASS"' /tmp/golden-path.json
+          grep -q '"grossAmountClp":60000' /tmp/golden-path.json
+          grep -q '"hostAmountClp":48000' /tmp/golden-path.json
+          grep -q '"platformAmountClp":12000' /tmp/golden-path.json
+          grep -q '"payoutAmountClp":48000' /tmp/golden-path.json
+          grep -q '"persistentRecordingEnabled":false' /tmp/golden-path.json
+          grep -q '"PAYOUT_SENT"' /tmp/golden-path.json
+
       - name: Print application log on failure
         if: failure()
         run: cat /tmp/tiempojusto-app.log || true
