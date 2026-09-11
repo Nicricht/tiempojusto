@@ -9,6 +9,8 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -160,15 +162,16 @@ public class ReconnectGoldenPathService {
     }
 
     private void setBothMediaBackdated(UUID roomId, int seconds) {
+        Timestamp at = Timestamp.from(Instant.now().minusSeconds(seconds));
         jdbc.update("""
                 update media.video_participant_state
                    set camera_valid = true,
                        media_flowing = true,
-                       last_valid_media_at = clock_timestamp() - (? * interval '1 second'),
-                       last_heartbeat_at = clock_timestamp() - (? * interval '1 second'),
+                       last_valid_media_at = ?,
+                       last_heartbeat_at = ?,
                        updated_at = clock_timestamp()
                  where video_room_id = ?
-                """, seconds, seconds, roomId);
+                """, at, at, roomId);
     }
 
     private int intQuery(String sql, Object arg) {
