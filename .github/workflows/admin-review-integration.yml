@@ -1,0 +1,114 @@
+name: Admin Human Review Integration
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/**'
+      - 'database/**'
+      - 'docs/admin/**'
+      - '.github/workflows/admin-review-integration.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/app/**'
+      - 'database/**'
+      - 'docs/admin/**'
+      - '.github/workflows/admin-review-integration.yml'
+
+jobs:
+  admin-review:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_DB: tiempojusto
+          POSTGRES_USER: tiempojusto
+          POSTGRES_PASSWORD: tiempojusto
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U tiempojusto -d tiempojusto"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGPASSWORD: tiempojusto
+      TJ_DB_URL: jdbc:postgresql://localhost:5432/tiempojusto
+      TJ_DB_USER: tiempojusto
+      TJ_DB_PASSWORD: tiempojusto
+      TJ_AUTH_DEV_HEADER_ENABLED: 'true'
+      SPRING_PROFILES_ACTIVE: ci
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Load database through V1.5
+        run: |
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/schema/TiempoJusto_PostgreSQL_Schema_V1_0.sql
+          for f in database/migrations/V1_1__geo_routing_eta.sql database/migrations/V1_2__webrtc_media.sql database/migrations/V1_3__oauth2_identity.sql database/migrations/V1_4__online_reconnect_persistence.sql database/migrations/V1_5__persistent_session_settlement.sql; do
+            psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f "$f"
+          done
+      - name: Seed ADMIN and S5 case
+        run: |
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 <<'SQL'
+          insert into iam.app_user(id, public_id, role, account_status, email)
+          values ('11111111-1111-1111-1111-111111111111','admin_ci','ADMIN','ACTIVE','admin-ci@tiempojusto.test');
+          insert into iam.app_user(id, public_id, role, account_status, email)
+          values ('22222222-2222-2222-2222-222222222222','host_ci','HOST','ACTIVE','host-ci@tiempojusto.test');
+          insert into safety.report(id, reporter_user_id, reported_user_id, category, description, status)
+          values ('33333333-3333-3333-3333-333333333333','11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','CI_SAFETY','Integration test','TRIAGED');
+          insert into safety.safety_case(id, subject_user_id, report_id, severity, decision_status, reversible)
+          values ('44444444-4444-4444-4444-444444444444','22222222-2222-2222-2222-222222222222','33333333-3333-3333-3333-333333333333','S5','HUMAN_REVIEW',false);
+          insert into safety.evidence_item(safety_case_id, evidence_type, storage_ref)
+          values ('44444444-4444-4444-4444-444444444444','EVENT_REF','ci:event:1');
+          SQL
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from safety.human_review_task where safety_case_id='44444444-4444-4444-4444-444444444444' and status='QUEUED'")" = "1"
+      - name: Build runtime
+        run: mvn -B -f backend/pom.xml -DskipTests package
+      - name: Start runtime
+        run: |
+          java -jar backend/app/target/tiempojusto-app-1.0.0.jar > /tmp/tiempojusto-admin.log 2>&1 &
+          for i in $(seq 1 40); do
+            if curl -fsS http://localhost:8080/actuator/health >/tmp/health.json; then exit 0; fi
+            sleep 2
+          done
+          cat /tmp/tiempojusto-admin.log
+          exit 1
+      - name: Exercise HumanReviewQueue
+        run: |
+          H='X-TJ-Actor-Id: 11111111-1111-1111-1111-111111111111'
+          curl -fsS -H "$H" http://localhost:8080/api/v1/admin/human-review-queue >/tmp/queue.json
+          cat /tmp/queue.json
+          grep -q '44444444-4444-4444-4444-444444444444' /tmp/queue.json
+          TASK=$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select id from safety.human_review_task where safety_case_id='44444444-4444-4444-4444-444444444444'")
+          curl -fsS -X POST -H "$H" http://localhost:8080/api/v1/admin/human-review-queue/$TASK/claim >/tmp/claim.json
+          grep -q 'IN_PROGRESS' /tmp/claim.json
+          curl -fsS -H "$H" http://localhost:8080/api/v1/admin/safety-cases/44444444-4444-4444-4444-444444444444/evidence-timeline >/tmp/evidence.json
+          grep -q 'EVENT_REF' /tmp/evidence.json
+          curl -fsS -X POST -H "$H" -H 'Content-Type: application/json' \
+            -d '{"outcome":"CONFIRMED","finalSeverity":"S5","reason":"CI human decision"}' \
+            http://localhost:8080/api/v1/admin/safety-cases/44444444-4444-4444-4444-444444444444/decision >/tmp/decision.json
+          grep -q 'CONFIRMED' /tmp/decision.json
+          grep -q 'S5' /tmp/decision.json
+          curl -fsS -H "$H" 'http://localhost:8080/api/v1/admin/audit-log?caseId=44444444-4444-4444-4444-444444444444' >/tmp/audit.json
+          grep -q 'SAFETY_CASE_DECIDED_CONFIRMED' /tmp/audit.json
+      - name: Assert Admin invariants
+        run: |
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from safety.human_review_task where safety_case_id='44444444-4444-4444-4444-444444444444' and status='RESOLVED'")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select action_code from safety.safety_case where id='44444444-4444-4444-4444-444444444444'")" = "CONFIRMED"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from platform.admin_action where target_id='44444444-4444-4444-4444-444444444444'")" -ge "2"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from platform.audit_event where entity_id='44444444-4444-4444-4444-444444444444'")" -ge "2"
+      - name: Verify finance Admin is read-only
+        run: |
+          H='X-TJ-Actor-Id: 11111111-1111-1111-1111-111111111111'
+          CODE=$(curl -sS -o /tmp/readonly.json -w '%{http_code}' -X POST -H "$H" http://localhost:8080/api/v1/admin/finance/payouts/00000000-0000-0000-0000-000000000000)
+          test "$CODE" = "405"
+          grep -q 'ADMIN_FINANCE_READ_ONLY' /tmp/readonly.json
+      - name: Print runtime log on failure
+        if: failure()
+        run: cat /tmp/tiempojusto-admin.log || true
