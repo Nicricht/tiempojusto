@@ -1,0 +1,535 @@
+{
+  "protocolVersion": "1.0",
+  "transport": {
+    "type": "websocket",
+    "endpoint": "/ws/v1",
+    "subprotocol": "tiempojusto.v1",
+    "encoding": "json",
+    "maxMessageBytes": 65536,
+    "heartbeatSeconds": 25,
+    "idleTimeoutSeconds": 60
+  },
+  "authority": {
+    "serverIsSourceOfTruth": true,
+    "businessMutationsOverWebSocket": false,
+    "notes": [
+      "WebSocket only distributes committed backend state.",
+      "Client timers are presentation only.",
+      "Socket connectivity is not media connectivity and never proves billable presence."
+    ]
+  },
+  "authentication": {
+    "method": "jwt_in_sec_websocket_protocol",
+    "offer": [
+      "tiempojusto.v1",
+      "bearer.<JWT>"
+    ],
+    "queryStringTokensAllowed": false,
+    "authorizationRecheckedOnSubscribe": true,
+    "tokenExpiryCloseCode": 4001,
+    "forbiddenTopicCloseCode": 4003
+  },
+  "replay": {
+    "sequenceScope": "per-topic",
+    "sequenceType": "int64",
+    "eventIdType": "uuid",
+    "delivery": "at-least-once",
+    "deduplicateBy": [
+      "eventId",
+      "topic+sequence"
+    ],
+    "maxAgeSeconds": 300,
+    "maxEventsPerTopic": 500,
+    "gapPolicy": "replay_if_available_else_resync_required"
+  },
+  "connectionLimits": {
+    "maxSubscriptionsPerConnection": 20,
+    "subscribeOperationsPerMinute": 30
+  },
+  "topics": {
+    "user:{userId}": {
+      "visibility": "PRIVATE_USER",
+      "authorization": "authenticated userId must equal token subject; privileged operations use admin tools, not this socket",
+      "events": [
+        "BID_REJECTED_PRIVATE",
+        "WINNER_SELECTED",
+        "BACKUP_OFFERED",
+        "WINNER_CONFIRMED",
+        "PAYOUT_AVAILABLE",
+        "REPORT_STATUS_CHANGED"
+      ]
+    },
+    "auction:{auctionId}": {
+      "visibility": "RESOURCE",
+      "authorization": "authenticated user must be eligible to view the auction",
+      "events": [
+        "AUCTION_STARTED",
+        "BID_ACCEPTED",
+        "POZO_UPDATED",
+        "TIMER_RESET_2M",
+        "AUCTION_CLOSED",
+        "CLOSE_NOW_EXECUTED",
+        "WINNER_CONFIRMED",
+        "LIVE_STARTED",
+        "LIVE_ENDED"
+      ]
+    },
+    "session:{sessionId}": {
+      "visibility": "PARTICIPANTS",
+      "authorization": "only HOST and confirmed BIDDER for the session",
+      "events": [
+        "ARRIVAL_CONFIRMED",
+        "HANDSHAKE_CONFIRMED",
+        "FREE_PERIOD_STARTED",
+        "PAID_ACTIVE_STARTED",
+        "SESSION_PAUSED",
+        "SESSION_RESUMED",
+        "SESSION_FINISHED",
+        "EXTENSION_PROPOSED",
+        "EXTENSION_COUNTERED",
+        "EXTENSION_CONFIRMED",
+        "ONLINE_CONNECTION_LOST",
+        "BILLING_PAUSED_CONNECTION"
+      ]
+    },
+    "live:{liveId}": {
+      "visibility": "LIVE_ACCESS",
+      "authorization": "HOST or user with valid LiveAccess from Bid/Ticket",
+      "events": [
+        "LIVE_STARTED",
+        "LIVE_CONNECTION_LOST",
+        "LIVE_ENDED"
+      ]
+    }
+  },
+  "clientFrames": {
+    "SUBSCRIBE": {
+      "required": [
+        "type",
+        "requestId",
+        "topic"
+      ],
+      "optional": [
+        "afterSequence"
+      ]
+    },
+    "UNSUBSCRIBE": {
+      "required": [
+        "type",
+        "requestId",
+        "topic"
+      ]
+    },
+    "PING": {
+      "required": [
+        "type",
+        "requestId",
+        "sentAt"
+      ]
+    }
+  },
+  "serverFrames": {
+    "READY": {
+      "fields": [
+        "type",
+        "connectionId",
+        "protocolVersion",
+        "serverTime",
+        "heartbeatSeconds",
+        "maxSubscriptions"
+      ]
+    },
+    "SUBSCRIBED": {
+      "fields": [
+        "type",
+        "requestId",
+        "topic",
+        "currentSequence",
+        "replayedFromSequence"
+      ]
+    },
+    "EVENT": {
+      "fields": [
+        "type",
+        "topic",
+        "event"
+      ]
+    },
+    "RESYNC_REQUIRED": {
+      "fields": [
+        "type",
+        "topic",
+        "currentSequence",
+        "snapshotUrl",
+        "reason"
+      ]
+    },
+    "ERROR": {
+      "fields": [
+        "type",
+        "requestId",
+        "code",
+        "message",
+        "retryable"
+      ]
+    },
+    "PONG": {
+      "fields": [
+        "type",
+        "requestId",
+        "serverTime"
+      ]
+    },
+    "AUTH_EXPIRING": {
+      "fields": [
+        "type",
+        "expiresAt"
+      ]
+    }
+  },
+  "eventEnvelope": {
+    "required": [
+      "specVersion",
+      "schemaVersion",
+      "eventId",
+      "type",
+      "topic",
+      "sequence",
+      "occurredAt",
+      "emittedAt",
+      "resourceType",
+      "resourceId",
+      "visibility",
+      "payload"
+    ],
+    "properties": {
+      "specVersion": "1.0",
+      "schemaVersion": "integer >= 1",
+      "eventId": "uuid",
+      "type": "event name",
+      "topic": "resolved topic",
+      "sequence": "monotonic int64 within topic",
+      "occurredAt": "server RFC3339 timestamp",
+      "emittedAt": "server RFC3339 timestamp",
+      "correlationId": "optional uuid/string",
+      "causationId": "optional uuid/string",
+      "resourceType": "USER|AUCTION|SESSION|LIVE",
+      "resourceId": "uuid",
+      "visibility": "RESOURCE|PARTICIPANTS|PRIVATE_USER|LIVE_ACCESS",
+      "payload": "event-specific object"
+    }
+  },
+  "eventVersioning": {
+    "compatibleChanges": [
+      "add optional payload fields",
+      "add new event types",
+      "add new optional envelope metadata"
+    ],
+    "breakingChanges": [
+      "remove/rename required field",
+      "change field meaning/type",
+      "weaken authorization boundary"
+    ],
+    "breakingPolicy": "new /ws/v2 or new event schemaVersion with explicit migration window"
+  },
+  "resync": {
+    "rule": "If a sequence gap cannot be replayed, server emits RESYNC_REQUIRED. Client fetches the REST snapshot and re-subscribes with the snapshot sequence.",
+    "snapshotSources": {
+      "AUCTION": "GET /api/v1/auctions/{id}",
+      "SESSION": "GET /api/v1/sessions/{id}",
+      "USER": "GET /api/v1/me plus relevant resource endpoint",
+      "LIVE": "GET /api/v1/live/{id} or auction live resource"
+    }
+  },
+  "security": {
+    "forbiddenPayloads": [
+      "raw KYC documents or biometrics",
+      "raw PAN/CVV",
+      "private exact meeting address unless separately authorized by REST flow",
+      "exact operational GPS history",
+      "provider secrets/tokens"
+    ],
+    "rules": [
+      "Every SUBSCRIBE is authorized server-side.",
+      "Topic names supplied by clients are untrusted input.",
+      "No cross-user user-topic subscription.",
+      "Sensitive events use user/session topics, never auction broadcast.",
+      "Authorization failures do not reveal whether a hidden resource exists."
+    ]
+  },
+  "closeCodes": {
+    "1000": "normal",
+    "1008": "protocol violation",
+    "4001": "authentication expired/invalid",
+    "4003": "topic forbidden",
+    "4008": "rate limit exceeded",
+    "4013": "server overloaded; reconnect with backoff"
+  },
+  "events": {
+    "AUCTION_STARTED": {
+      "source": "V1.7",
+      "visibility": "RESOURCE",
+      "payloadRequired": [
+        "auctionId",
+        "startedAt",
+        "deadlineAt",
+        "openingAmountClp",
+        "nextActionableAmountClp"
+      ]
+    },
+    "BID_ACCEPTED": {
+      "source": "V1.7",
+      "visibility": "RESOURCE",
+      "payloadRequired": [
+        "auctionId",
+        "bidId",
+        "amountClp",
+        "serverSequence",
+        "acceptedAt"
+      ]
+    },
+    "BID_REJECTED_PRIVATE": {
+      "source": "V1.7",
+      "visibility": "PRIVATE_USER",
+      "payloadRequired": [
+        "auctionId",
+        "attemptId",
+        "code",
+        "rejectedAt"
+      ]
+    },
+    "POZO_UPDATED": {
+      "source": "V1.7",
+      "visibility": "RESOURCE",
+      "payloadRequired": [
+        "auctionId",
+        "currentAmountClp",
+        "nextActionableAmountClp",
+        "updatedAt"
+      ]
+    },
+    "TIMER_RESET_2M": {
+      "source": "V1.7",
+      "visibility": "RESOURCE",
+      "payloadRequired": [
+        "auctionId",
+        "deadlineAt",
+        "triggeredByBidId",
+        "resetAt"
+      ]
+    },
+    "AUCTION_CLOSED": {
+      "source": "V1.7",
+      "visibility": "RESOURCE",
+      "payloadRequired": [
+        "auctionId",
+        "reason",
+        "closedAt",
+        "finalAmountClp"
+      ]
+    },
+    "CLOSE_NOW_EXECUTED": {
+      "source": "V1.7",
+      "visibility": "RESOURCE",
+      "payloadRequired": [
+        "auctionId",
+        "bidId",
+        "amountClp",
+        "closedAt"
+      ]
+    },
+    "WINNER_SELECTED": {
+      "source": "V1.7",
+      "visibility": "PRIVATE_USER",
+      "payloadRequired": [
+        "auctionId",
+        "candidateNo",
+        "confirmDeadlineAt",
+        "selectedAt"
+      ]
+    },
+    "BACKUP_OFFERED": {
+      "source": "V1.7",
+      "visibility": "PRIVATE_USER",
+      "payloadRequired": [
+        "auctionId",
+        "candidateNo",
+        "offerAmountClp",
+        "confirmDeadlineAt",
+        "offeredAt"
+      ]
+    },
+    "WINNER_CONFIRMED": {
+      "source": "V1.7",
+      "visibility": "RESOURCE",
+      "payloadRequired": [
+        "auctionId",
+        "appointmentId",
+        "confirmedAt"
+      ]
+    },
+    "ARRIVAL_CONFIRMED": {
+      "source": "V1.7",
+      "visibility": "PARTICIPANTS",
+      "payloadRequired": [
+        "appointmentId",
+        "participantRole",
+        "confirmedAt"
+      ]
+    },
+    "HANDSHAKE_CONFIRMED": {
+      "source": "V1.7",
+      "visibility": "PARTICIPANTS",
+      "payloadRequired": [
+        "appointmentId",
+        "sessionId",
+        "confirmedAt"
+      ]
+    },
+    "FREE_PERIOD_STARTED": {
+      "source": "V1.7",
+      "visibility": "PARTICIPANTS",
+      "payloadRequired": [
+        "sessionId",
+        "modality",
+        "startedAt",
+        "freeEndsAt"
+      ]
+    },
+    "PAID_ACTIVE_STARTED": {
+      "source": "V1.7",
+      "visibility": "PARTICIPANTS",
+      "payloadRequired": [
+        "sessionId",
+        "startedAt"
+      ]
+    },
+    "SESSION_PAUSED": {
+      "source": "V1.7",
+      "visibility": "PARTICIPANTS",
+      "payloadRequired": [
+        "sessionId",
+        "pausedAt",
+        "reason"
+      ]
+    },
+    "SESSION_RESUMED": {
+      "source": "V1.7",
+      "visibility": "PARTICIPANTS",
+      "payloadRequired": [
+        "sessionId",
+        "resumedAt"
+      ]
+    },
+    "SESSION_FINISHED": {
+      "source": "V1.7",
+      "visibility": "PARTICIPANTS",
+      "payloadRequired": [
+        "sessionId",
+        "finishedAt",
+        "billableSeconds",
+        "finishReason"
+      ]
+    },
+    "EXTENSION_PROPOSED": {
+      "source": "V1.7",
+      "visibility": "PARTICIPANTS",
+      "payloadRequired": [
+        "sessionId",
+        "negotiationId",
+        "durationMinutes",
+        "amountClp",
+        "round",
+        "expiresAt"
+      ]
+    },
+    "EXTENSION_COUNTERED": {
+      "source": "V1.7",
+      "visibility": "PARTICIPANTS",
+      "payloadRequired": [
+        "sessionId",
+        "negotiationId",
+        "durationMinutes",
+        "amountClp",
+        "round",
+        "expiresAt"
+      ]
+    },
+    "EXTENSION_CONFIRMED": {
+      "source": "V1.7",
+      "visibility": "PARTICIPANTS",
+      "payloadRequired": [
+        "sessionId",
+        "negotiationId",
+        "durationMinutes",
+        "amountClp",
+        "confirmedAt"
+      ]
+    },
+    "LIVE_STARTED": {
+      "source": "V1.7",
+      "visibility": "RESOURCE",
+      "payloadRequired": [
+        "liveId",
+        "auctionId",
+        "startedAt"
+      ]
+    },
+    "LIVE_CONNECTION_LOST": {
+      "source": "V1.7",
+      "visibility": "LIVE_ACCESS",
+      "payloadRequired": [
+        "liveId",
+        "detectedAt",
+        "reconnectDeadlineAt"
+      ]
+    },
+    "LIVE_ENDED": {
+      "source": "V1.7",
+      "visibility": "RESOURCE",
+      "payloadRequired": [
+        "liveId",
+        "auctionId",
+        "endedAt",
+        "reason"
+      ]
+    },
+    "ONLINE_CONNECTION_LOST": {
+      "source": "V1.7",
+      "visibility": "PARTICIPANTS",
+      "payloadRequired": [
+        "sessionId",
+        "detectedAt",
+        "lastValidMediaAt",
+        "reconnectDeadlineAt"
+      ]
+    },
+    "BILLING_PAUSED_CONNECTION": {
+      "source": "V1.7",
+      "visibility": "PARTICIPANTS",
+      "payloadRequired": [
+        "sessionId",
+        "effectivePausedAt",
+        "reconnectDeadlineAt"
+      ]
+    },
+    "PAYOUT_AVAILABLE": {
+      "source": "V1.7",
+      "visibility": "PRIVATE_USER",
+      "payloadRequired": [
+        "payoutId",
+        "amountClp",
+        "availableAt"
+      ]
+    },
+    "REPORT_STATUS_CHANGED": {
+      "source": "V1.7",
+      "visibility": "PRIVATE_USER",
+      "payloadRequired": [
+        "reportId",
+        "status",
+        "updatedAt"
+      ]
+    }
+  }
+}
