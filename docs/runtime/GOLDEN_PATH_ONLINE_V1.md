@@ -1,5 +1,9 @@
 # TiempoJusto Golden Path Online V1
 
+## Estado
+
+Validado por el workflow `Runtime Integration`: PostgreSQL/PostGIS, build Spring Boot, health del runtime y ejecución HTTP del Golden Path sandbox completan correctamente en CI.
+
 ## Objetivo
 
 Probar una primera vertical slice ejecutable que conecte reglas de Proposal, Auction, reservas financieras, WebRTC privado, estado Online, settlement 80/20, hold de 60 minutos y payout.
