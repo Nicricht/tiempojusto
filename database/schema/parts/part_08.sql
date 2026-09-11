@@ -1,3 +1,88 @@
+
+CREATE TABLE platform.idempotency_record (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid REFERENCES iam.app_user(id) ON DELETE SET NULL,
+    scope varchar(80) NOT NULL,
+    idempotency_key text NOT NULL,
+    request_hash text NOT NULL,
+    response_code integer,
+    response_body jsonb,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL,
+    CONSTRAINT idempotency_expiry_ck CHECK (expires_at > created_at)
+);
+
+CREATE UNIQUE INDEX idempotency_scope_key_uidx
+ON platform.idempotency_record(
+    COALESCE(user_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    scope,
+    idempotency_key
+);
+
+-- --------------------------------------------------------------------------
+-- 15. Minimum indexes from ER V1.0 + high-value FK indexes
+-- --------------------------------------------------------------------------
+CREATE INDEX identity_verification_user_idx ON iam.identity_verification(user_id, created_at DESC);
+CREATE INDEX device_user_idx ON iam.device(user_id, last_seen_at DESC);
+
+CREATE INDEX approximate_location_profile_idx ON geo.approximate_location(profile_id, valid_from DESC);
+CREATE INDEX approximate_location_gist ON geo.approximate_location USING gist(centroid);
+CREATE INDEX operational_geo_gist ON geo.operational_location_event USING gist(point);
+CREATE INDEX operational_geo_purge_idx ON geo.operational_location_event(purge_after) WHERE preservation_hold = false;
+CREATE INDEX operational_geo_appointment_idx ON geo.operational_location_event(appointment_id, captured_at DESC);
+
+CREATE INDEX proposal_active_market_idx
+ON market.proposal(host_profile_id, modality, duration_minutes, amount_clp DESC)
+WHERE status = 'ACTIVE';
+CREATE INDEX proposal_bidder_idx ON market.proposal(bidder_user_id, status, valid_until);
+CREATE INDEX proposal_metric_latest_idx ON market.proposal_metric_snapshot(host_profile_id, modality, duration_minutes, calculated_at DESC);
+CREATE INDEX availability_active_geo_idx ON market.now_availability(status, modality, activated_at DESC);
+CREATE INDEX meta_active_deadline_idx ON market.meta_now(deadline_at) WHERE status = 'ACTIVE';
+
+CREATE INDEX auction_open_end_idx ON auction.auction(status, effective_end_at) WHERE status = 'OPEN';
+CREATE INDEX auction_host_idx ON auction.auction(host_user_id, started_at DESC);
+CREATE INDEX auction_participant_bidder_idx ON auction.auction_participant(bidder_user_id, joined_at DESC);
+CREATE INDEX bid_auction_seq_idx ON auction.bid(auction_id, server_sequence);
+CREATE INDEX bid_auction_amount_idx ON auction.bid(auction_id, amount_clp DESC, created_at);
+CREATE INDEX bid_bidder_idx ON auction.bid(bidder_user_id, created_at DESC);
+CREATE INDEX reservation_provider_ref_idx ON auction.funds_reservation(provider_code, provider_reference);
+CREATE INDEX reservation_user_status_idx ON auction.funds_reservation(user_id, status, expires_at);
+
+CREATE INDEX appointment_party_idx ON appointment.appointment(host_user_id, bidder_user_id, created_at DESC);
+CREATE INDEX arrival_appointment_idx ON appointment.arrival_check_in(appointment_id, checked_at DESC);
+CREATE INDEX session_segment_time_idx ON appointment.session_segment(session_id, started_at);
+CREATE INDEX presence_session_time_idx ON appointment.presence_event(session_id, server_at);
+CREATE INDEX extension_offer_negotiation_idx ON appointment.extension_offer(negotiation_id, created_at);
+
+CREATE INDEX live_access_user_idx ON media.live_access(user_id, granted_at DESC);
+CREATE INDEX live_ticket_buyer_idx ON media.live_ticket(buyer_user_id, purchased_at DESC);
+CREATE INDEX video_event_room_time_idx ON media.video_participant_event(video_room_id, server_at);
+
+CREATE INDEX ledger_transaction_ref_idx ON finance.ledger_transaction(reference_type, reference_id, created_at);
+CREATE INDEX ledger_account_time_idx ON finance.ledger_entry(account_id, created_at, id);
+CREATE INDEX ledger_entry_tx_idx ON finance.ledger_entry(transaction_id, id);
+CREATE INDEX payout_due_idx ON finance.payout(status, pending_until) WHERE status = 'PENDING_HOLD';
+CREATE INDEX dispute_appointment_idx ON finance.payment_dispute(appointment_id, opened_at DESC);
+
+CREATE INDEX report_subject_idx ON safety.report(reported_user_id, created_at DESC);
+CREATE INDEX safety_case_subject_idx ON safety.safety_case(subject_user_id, created_at DESC);
+CREATE INDEX safety_queue_idx ON safety.human_review_task(status, created_at);
+CREATE INDEX risk_signal_user_idx ON safety.risk_signal(user_id, created_at DESC);
+
+CREATE INDEX conversation_appointment_idx ON comms.conversation(appointment_id);
+CREATE INDEX message_conversation_time_idx ON comms.message(conversation_id, created_at);
+CREATE INDEX notification_user_idx ON comms.notification(user_id, read_at, created_at DESC);
+
+CREATE INDEX rating_target_idx ON reputation.rating(to_user_id, created_at DESC);
+CREATE INDEX reputation_latest_idx ON reputation.reputation_snapshot(user_id, calculated_at DESC);
+
+CREATE INDEX audit_entity_idx ON platform.audit_event(entity_type, entity_id, created_at DESC);
+CREATE INDEX outbox_pending_idx ON platform.outbox_event(occurred_at) WHERE published_at IS NULL;
+CREATE INDEX idempotency_expiry_idx ON platform.idempotency_record(expires_at);
+
+-- --------------------------------------------------------------------------
+-- 16. Retention helpers (scheduler/job must call them)
+-- --------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION geo.purge_expired_operational_locations(p_limit integer DEFAULT 10000)
 RETURNS integer
 LANGUAGE plpgsql
