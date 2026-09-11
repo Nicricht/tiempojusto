@@ -95,12 +95,13 @@ public class PersistentSettlementGoldenPathService {
                 "Zero billing must release the complete bidder reservation");
 
         Fixture fractional = paidFixture(root + "r", 15, 60_000L, 1);
-        var fractionalFinish = termination.finish(fractional.bidderUserId(), fractional.sessionId());
-        require("PENDING_ROUNDING_POLICY".equals(fractionalFinish.settlementState()),
-                "Fractional proportional CLP must be blocked without invented rounding");
+        termination.finish(fractional.bidderUserId(), fractional.sessionId());
+        forceOneBillableSecond(fractional.sessionId());
         var blocked = settlements.processSession(fractional.sessionId());
         require("PENDING_ROUNDING_POLICY".equals(blocked.status()),
                 "Persistent finance must retain pending rounding policy state");
+        require("PROPORTIONAL_CLP_FRACTION".equals(blocked.roundingReason()),
+                "One billable second at 60000/15m must expose the proportional CLP fraction");
         require(blocked.ledgerTransactionId() == null && blocked.payoutId() == null,
                 "Rounding-policy block must not move money");
         require("RESERVED".equals(fundsStatus(fractional.sessionId())),
@@ -167,6 +168,19 @@ public class PersistentSettlementGoldenPathService {
         online.join(host.userId(), confirmed.sessionId(), mediaOk);
         online.join(bidder.userId(), confirmed.sessionId(), mediaOk);
         return new Fixture(host.userId(), bidder.userId(), confirmed.sessionId());
+    }
+
+    private void forceOneBillableSecond(UUID sessionId) {
+        jdbc.update("""
+                update appointment.session_segment
+                   set billable_seconds = 1
+                 where session_id = ? and segment_type = 'PAID'
+                """, sessionId);
+        jdbc.update("""
+                update appointment.appointment_session
+                   set billable_seconds = 1
+                 where id = ?
+                """, sessionId);
     }
 
     private void backdatePayoutHold(UUID payoutId, UUID sourceTransactionId) {
