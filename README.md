@@ -4,9 +4,9 @@ Repositorio técnico del proyecto **TiempoJusto**.
 
 ## Estado actual
 
-TiempoJusto ya pasó de definición funcional a una primera integración ejecutable. El repositorio contiene schema PostgreSQL/PostGIS V1, máquinas de estado Java 21, Ledger financiero + PaymentPort Mock, OpenAPI REST V1, WebSocket V1, Geo/ETA V1, WebRTC/Media V1, wireframes UX P2.1, un runtime Spring Boot integrado y un Golden Path Online sandbox ejecutado por CI.
+TiempoJusto ya pasó de definición funcional a una integración ejecutable con una primera vertical slice persistente. El repositorio contiene schema PostgreSQL/PostGIS V1, máquinas de estado Java 21, Finance/Ledger core, OpenAPI REST V1, WebSocket V1, Geo/ETA V1, WebRTC/Media V1, wireframes UX P2.1, runtime Spring Boot y application services para el recorrido Online.
 
-El workflow `Runtime Integration` ejecuta el schema físico y las migraciones sobre PostgreSQL 16 + PostGIS real en CI, compila el reactor Java completo, inicia el JAR integrado, exige `/actuator/health = UP` y recorre el Golden Path Online sandbox vía HTTP.
+El workflow `Runtime Integration` ejecuta Schema V1.0 + migraciones V1.1/V1.2 sobre PostgreSQL 16 + PostGIS real, compila el reactor Java, inicia el JAR, exige `/actuator/health = UP`, mantiene el Golden Path sandbox anterior y además recorre por HTTP el nuevo flujo persistente desde registro/KYC sandbox hasta finalización de una sesión Online.
 
 ## Estructura principal
 
@@ -19,7 +19,7 @@ El workflow `Runtime Integration` ejecuta el schema físico y las migraciones so
 - `backend/pom.xml`
   Reactor Maven para State Machines, Finance, Geo, Media y la aplicación integrada.
 - `backend/app/`
-  Runtime Spring Boot Java 21 con datasource PostgreSQL, health, verificación fail-fast del schema y harness Online sandbox.
+  Runtime Spring Boot Java 21 con datasource PostgreSQL, health, application services, endpoints HTTP y transactional outbox/audit.
 - `backend/state-machines/`
   Máquinas de estado Java 21 y 34 contract tests.
 - `backend/finance/`
@@ -35,9 +35,11 @@ El workflow `Runtime Integration` ejecuta el schema físico y las migraciones so
 - `docs/ux/P2_1_WIREFRAMES_V1.md`
   Trazabilidad de los wireframes P2.1 y enlace al archivo Figma editable.
 - `docs/runtime/RUNTIME_INTEGRATION_V1.md`
-  Ejecución local, límites de los adapters mock y alcance de la integración runtime V1.
+  Ejecución local, límites de adapters mock y alcance del runtime V1.
 - `docs/runtime/GOLDEN_PATH_ONLINE_V1.md`
-  Vertical slice Online sandbox y sus invariantes verificadas por CI.
+  Vertical slice Online sandbox original y sus invariantes.
+- `docs/runtime/APPLICATION_SERVICES_ONLINE_V1.md`
+  Application services, persistencia transaccional, endpoints y límites del nuevo flujo Online persistente.
 
 ## Wireframes UX P2.1
 
@@ -62,18 +64,22 @@ Incluye onboarding/KYC, discovery, mapa aproximado, perfil, Proposal, Disponible
 | UX / wireframes P2.1 | ✅ Figma V1 |
 | Runtime Spring Boot integrado V1 | ✅ CI ejecutable |
 | Golden Path Online sandbox | ✅ CI end-to-end entre módulos |
-| GitHub Actions | ✅ configurado |
-| Golden Path persistente + endpoints reales | ⏭️ siguiente |
+| Application services Online persistentes | ✅ registro/KYC sandbox -> Proposal -> Close Now -> Online -> FINISHED |
+| Transactional audit/outbox | ✅ aplicado a mutaciones críticas del corte |
+| OAuth2/JWT real | pendiente |
 | KYC real | pendiente |
 | PaymentPort / payouts reales | pendiente |
+| Ledger/Finance persistente de aplicación | pendiente |
 | Routing/ETA real | pendiente |
 | WebRTC/TURN real | pendiente |
+| Pause/reconnect/resume persistente completo | pendiente |
+| Regla redondeo proporcional CLP | pendiente |
 | Frontend funcional | pendiente |
 | Admin mínimo / HumanReviewQueue UI | pendiente |
-| E2E / security / observability | pendiente |
+| Security / E2E ampliados / observability | pendiente |
 | Staging / piloto | pendiente |
 
-> La validación PostgreSQL indicada arriba es una validación reproducible de CI, no equivale todavía a staging ni producción. El Golden Path actual usa adapters sandbox/mock y no procesa dinero real.
+> La validación PostgreSQL indicada es reproducible en CI y no equivale a staging o producción. Los endpoints `sandbox` y los adapters Mock siguen sin procesar identidad, pagos, routing o media reales.
 
 ## Ejecutar módulos
 
@@ -104,18 +110,16 @@ Health:
 curl http://localhost:8080/actuator/health
 ```
 
-Golden Path sandbox:
+El adapter temporal `X-TJ-Actor-Id` está deshabilitado por defecto. Solo para desarrollo controlado puede habilitarse con:
 
 ```bash
-curl -X POST http://localhost:8080/internal/sandbox/golden-path/online \
-  -H 'Content-Type: application/json' \
-  -d '{"amountClp":60000,"durationMinutes":30}'
+export TJ_AUTH_DEV_HEADER_ENABLED=true
 ```
 
 ## Próximo hito
 
-Convertir el Golden Path sandbox en **application services y endpoints persistentes reales**, manteniendo el mismo recorrido:
+Completar la vertical slice productiva sin inventar reglas pendientes:
 
-`registro/KYC -> Proposal -> Auction -> reserva de fondos -> Online -> FREE_ONLINE -> aceptación bilateral -> PAID_ACTIVE -> settlement -> hold -> payout`.
+`OAuth/JWT -> application services restantes -> pause/reconnect/resume -> settlement/ledger persistente -> adapters reales de proveedores`.
 
-Los adapters `MockPaymentPort`, `MockRoutingPort` y `MockWebRtcPort` siguen siendo exclusivamente de desarrollo/CI y no representan proveedores reales de producción.
+La liquidación parcial que produzca una fracción no entera de CLP queda explícitamente bloqueada como `PENDING_ROUNDING_POLICY` hasta que producto congele la regla exacta de redondeo.

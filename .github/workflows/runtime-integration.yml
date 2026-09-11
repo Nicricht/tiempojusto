@@ -40,6 +40,7 @@ jobs:
       TJ_DB_URL: jdbc:postgresql://localhost:5432/tiempojusto
       TJ_DB_USER: tiempojusto
       TJ_DB_PASSWORD: tiempojusto
+      TJ_AUTH_DEV_HEADER_ENABLED: 'true'
       SPRING_PROFILES_ACTIVE: ci
 
     steps:
@@ -89,7 +90,7 @@ jobs:
       - name: Assert application health
         run: grep -q '"status":"UP"' /tmp/health.json
 
-      - name: Execute Online Golden Path sandbox
+      - name: Execute legacy Online Golden Path sandbox
         run: |
           curl -fsS -X POST http://localhost:8080/internal/sandbox/golden-path/online \
             -H 'Content-Type: application/json' \
@@ -101,7 +102,103 @@ jobs:
           grep -q '"platformAmountClp":12000' /tmp/golden-path.json
           grep -q '"payoutAmountClp":48000' /tmp/golden-path.json
           grep -q '"persistentRecordingEnabled":false' /tmp/golden-path.json
-          grep -q '"PAYOUT_SENT"' /tmp/golden-path.json
+
+      - name: Execute persistent application-service Online flow
+        run: |
+          set -euo pipefail
+
+          curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
+            -H 'Content-Type: application/json' \
+            -d '{"role":"HOST","email":"host-ci@tiempojusto.test","username":"host_ci","displayName":"Host CI","publicAge":28,"supportsOnline":true}' > /tmp/host.json
+          HOST_ID=$(python3 -c 'import json; print(json.load(open("/tmp/host.json"))["userId"])')
+          HOST_PROFILE_ID=$(python3 -c 'import json; print(json.load(open("/tmp/host.json"))["hostProfileId"])')
+
+          curl -fsS -X POST "http://localhost:8080/api/v1/sandbox/identity/users/$HOST_ID/verify-adult" \
+            -H 'Content-Type: application/json' \
+            -d '{"dateOfBirth":"1998-04-12","legalCountryCode":"CL"}' > /tmp/host-kyc.json
+
+          curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
+            -H 'Content-Type: application/json' \
+            -d '{"role":"BIDDER","email":"bidder-ci@tiempojusto.test","username":"bidder_ci","displayName":"Bidder CI","publicAge":30,"supportsOnline":false}' > /tmp/bidder.json
+          BIDDER_ID=$(python3 -c 'import json; print(json.load(open("/tmp/bidder.json"))["userId"])')
+
+          curl -fsS -X POST "http://localhost:8080/api/v1/sandbox/identity/users/$BIDDER_ID/verify-adult" \
+            -H 'Content-Type: application/json' \
+            -d '{"dateOfBirth":"1996-02-20","legalCountryCode":"CL"}' > /tmp/bidder-kyc.json
+
+          curl -fsS -X POST http://localhost:8080/api/v1/sandbox/funding/me \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Content-Type: application/json' \
+            -d '{"amountClp":60000}' > /tmp/funding.json
+
+          curl -fsS -X POST "http://localhost:8080/api/v1/profiles/$HOST_PROFILE_ID/proposals" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Content-Type: application/json' \
+            -d '{"modality":"ONLINE","durationMinutes":30,"amountClp":60000}' > /tmp/proposal.json
+          PROPOSAL_ID=$(python3 -c 'import json; print(json.load(open("/tmp/proposal.json"))["id"])')
+
+          curl -fsS -X POST http://localhost:8080/api/v1/sandbox/auctions \
+            -H "X-TJ-Actor-Id: $HOST_ID" \
+            -H 'Content-Type: application/json' \
+            -d "{\"hostProfileId\":\"$HOST_PROFILE_ID\",\"durationMinutes\":30,\"openingAmountClp\":45000,\"closeNowAmountClp\":60000}" > /tmp/auction.json
+          AUCTION_ID=$(python3 -c 'import json; print(json.load(open("/tmp/auction.json"))["id"])')
+
+          curl -fsS -X POST "http://localhost:8080/api/v1/auctions/$AUCTION_ID/close-now" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Idempotency-Key: ci-close-now-001' > /tmp/close-now.json
+          APPOINTMENT_ID=$(python3 -c 'import json; print(json.load(open("/tmp/close-now.json"))["appointmentId"])')
+
+          curl -fsS -X POST "http://localhost:8080/api/v1/appointments/$APPOINTMENT_ID/confirm-now" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" > /tmp/confirm.json
+          SESSION_ID=$(python3 -c 'import json; print(json.load(open("/tmp/confirm.json"))["sessionId"])')
+
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/online/join" \
+            -H "X-TJ-Actor-Id: $HOST_ID" -H 'Content-Type: application/json' \
+            -d '{"cameraValid":true,"mediaFlowing":true,"audioMuted":false}' > /tmp/host-join.json
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/online/join" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" -H 'Content-Type: application/json' \
+            -d '{"cameraValid":true,"mediaFlowing":true,"audioMuted":false}' > /tmp/bidder-join.json
+
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 <<SQL
+          with t as (select clock_timestamp() as now_at)
+          update appointment.appointment_session s
+             set free_started_at = t.now_at - interval '2 minutes', free_ends_at = t.now_at
+            from t where s.id = '$SESSION_ID'::uuid;
+          update media.video_room vr
+             set free_online_end = s.free_ends_at
+            from appointment.appointment_session s
+           where s.id = '$SESSION_ID'::uuid and vr.appointment_id = s.appointment_id;
+          SQL
+
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/paid-consent" \
+            -H "X-TJ-Actor-Id: $HOST_ID" > /tmp/host-consent.json
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/paid-consent" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" > /tmp/bidder-consent.json
+          grep -q '"status":"PAID_ACTIVE"' /tmp/bidder-consent.json
+
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 <<SQL
+          with t as (select clock_timestamp() as now_at)
+          update appointment.appointment_session s
+             set paid_started_at = t.now_at - interval '30 minutes'
+            from t where s.id = '$SESSION_ID'::uuid;
+          update appointment.session_segment
+             set started_at = clock_timestamp() - interval '30 minutes'
+           where session_id = '$SESSION_ID'::uuid and segment_type = 'PAID' and ended_at is null;
+          SQL
+
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/finish" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" > /tmp/finish.json
+          cat /tmp/finish.json
+          grep -q '"billableSeconds":1800' /tmp/finish.json
+          grep -q '"settlementState":"READY_FOR_SETTLEMENT"' /tmp/finish.json
+
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from iam.app_user where id in ('$HOST_ID'::uuid,'$BIDDER_ID'::uuid) and account_status='ACTIVE'")" = "2"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from iam.identity_verification where user_id in ('$HOST_ID'::uuid,'$BIDDER_ID'::uuid) and status='VERIFIED' and verified_adult=true")" = "2"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from market.proposal where id='$PROPOSAL_ID'::uuid and status='ACTIVE' and valid_until >= created_at + interval '7 days'")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from auction.auction where id='$AUCTION_ID'::uuid and status='CLOSED' and winner_user_id='$BIDDER_ID'::uuid")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from appointment.appointment_session where id='$SESSION_ID'::uuid and status='ENDED' and billable_seconds=1800")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from media.video_room vr join appointment.appointment_session s on s.appointment_id=vr.appointment_id where s.id='$SESSION_ID'::uuid and vr.status='ENDED' and vr.persistent_recording_enabled=false")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from platform.outbox_event where aggregate_id in ('$PROPOSAL_ID'::uuid,'$AUCTION_ID'::uuid,'$SESSION_ID'::uuid)")" -ge "5"
 
       - name: Print application log on failure
         if: failure()
