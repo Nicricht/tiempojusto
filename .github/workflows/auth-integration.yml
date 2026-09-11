@@ -1,0 +1,138 @@
+name: Auth Integration
+
+on:
+  pull_request:
+    paths:
+      - 'backend/app/**'
+      - 'database/migrations/V1_3__oauth2_identity.sql'
+      - '.github/workflows/auth-integration.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/app/**'
+      - 'database/migrations/V1_3__oauth2_identity.sql'
+      - '.github/workflows/auth-integration.yml'
+
+jobs:
+  oauth2-jwt:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_DB: tiempojusto
+          POSTGRES_USER: tiempojusto
+          POSTGRES_PASSWORD: tiempojusto
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tiempojusto -d tiempojusto"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      PGPASSWORD: tiempojusto
+      TJ_DB_URL: jdbc:postgresql://localhost:5432/tiempojusto
+      TJ_DB_USER: tiempojusto
+      TJ_DB_PASSWORD: tiempojusto
+      TJ_AUTH_DEV_HEADER_ENABLED: 'false'
+      TJ_AUTH_JWT_ENABLED: 'true'
+      TJ_AUTH_JWT_ISSUER: https://ci.tiempojusto.invalid
+      TJ_AUTH_JWT_AUDIENCE: tiempojusto-api
+      TJ_AUTH_REFRESH_ENABLED: 'true'
+      TJ_AUTH_REFRESH_TOKEN_URI: http://localhost:8080/internal/ci/oauth/token
+      TJ_AUTH_REFRESH_CLIENT_ID: tiempojusto-ci
+      SPRING_PROFILES_ACTIVE: ci
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Load database
+        run: |
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/schema/TiempoJusto_PostgreSQL_Schema_V1_0.sql
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_1__geo_routing_eta.sql
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_2__webrtc_media.sql
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_3__oauth2_identity.sql
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from pg_class where oid='iam.oauth_identity'::regclass")" = "1"
+
+      - name: Generate ephemeral CI JWT key
+        run: |
+          SECRET_B64=$(openssl rand -base64 48 | tr -d '\n')
+          echo "TJ_AUTH_JWT_HMAC_SECRET_B64=$SECRET_B64" >> "$GITHUB_ENV"
+
+      - name: Build runtime
+        run: mvn -B -f backend/pom.xml -DskipTests package
+
+      - name: Start runtime with JWT auth
+        run: |
+          java -jar backend/app/target/tiempojusto-app-1.0.0.jar > /tmp/tiempojusto-auth.log 2>&1 &
+          for i in $(seq 1 40); do
+            if curl -fsS http://localhost:8080/actuator/health >/tmp/health.json; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/tiempojusto-auth.log
+          exit 1
+
+      - name: Verify signed JWT identity mapping
+        run: |
+          set -euo pipefail
+          curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
+            -H 'Content-Type: application/json' \
+            -d '{"role":"BIDDER","email":"auth-ci@tiempojusto.test","username":"auth_ci","displayName":"Auth CI","publicAge":30,"supportsOnline":false}' >/tmp/user.json
+          USER_ID=$(python3 -c 'import json; print(json.load(open("/tmp/user.json"))["userId"])')
+          curl -fsS -X POST "http://localhost:8080/api/v1/sandbox/identity/users/$USER_ID/verify-adult" \
+            -H 'Content-Type: application/json' \
+            -d '{"dateOfBirth":"1996-02-20","legalCountryCode":"CL"}' >/tmp/kyc.json
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 \
+            -c "insert into iam.oauth_identity(user_id,issuer,subject) values ('$USER_ID'::uuid,'https://ci.tiempojusto.invalid','ci-auth-user');"
+
+          TOKEN=$(python3 - <<'PY'
+          import base64, hashlib, hmac, json, os, time
+          def b64(data): return base64.urlsafe_b64encode(data).rstrip(b'=').decode()
+          now=int(time.time())
+          header={"alg":"HS256","typ":"JWT"}
+          payload={"iss":os.environ["TJ_AUTH_JWT_ISSUER"],"sub":"ci-auth-user","aud":[os.environ["TJ_AUTH_JWT_AUDIENCE"]],"iat":now,"nbf":now-1,"exp":now+900,"scope":"openid profile"}
+          h=b64(json.dumps(header,separators=(',',':')).encode())
+          p=b64(json.dumps(payload,separators=(',',':')).encode())
+          signing=f"{h}.{p}".encode()
+          secret=base64.b64decode(os.environ["TJ_AUTH_JWT_HMAC_SECRET_B64"])
+          sig=b64(hmac.new(secret,signing,hashlib.sha256).digest())
+          print(f"{h}.{p}.{sig}")
+          PY
+          )
+
+          CODE=$(curl -sS -o /tmp/noauth.json -w '%{http_code}' http://localhost:8080/api/v1/auth/me -H "X-TJ-Actor-Id: $USER_ID")
+          test "$CODE" = "401"
+
+          curl -fsS http://localhost:8080/api/v1/auth/me \
+            -H "Authorization: Bearer $TOKEN" >/tmp/me.json
+          grep -q "\"userId\":\"$USER_ID\"" /tmp/me.json
+          grep -q '"accountStatus":"ACTIVE"' /tmp/me.json
+
+          TAMPERED="${TOKEN%?}x"
+          CODE=$(curl -sS -o /tmp/tampered.json -w '%{http_code}' http://localhost:8080/api/v1/auth/me -H "Authorization: Bearer $TAMPERED")
+          test "$CODE" = "401"
+
+      - name: Verify OAuth2 refresh exchange contract
+        run: |
+          curl -fsS -D /tmp/refresh-headers.txt -X POST http://localhost:8080/api/v1/auth/refresh \
+            -H 'Content-Type: application/json' \
+            -d '{"refreshToken":"ci-refresh-token"}' >/tmp/refresh.json
+          grep -q '"refresh_token":"ci-refresh-token-rotated"' /tmp/refresh.json
+          grep -qi 'cache-control: no-store' /tmp/refresh-headers.txt
+
+      - name: Print runtime log on failure
+        if: failure()
+        run: cat /tmp/tiempojusto-auth.log || true
