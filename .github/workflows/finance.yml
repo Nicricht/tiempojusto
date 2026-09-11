@@ -1,0 +1,28 @@
+name: Finance Core
+
+on:
+  push:
+    paths:
+      - 'backend/finance/**'
+      - '.github/workflows/finance.yml'
+  pull_request:
+    paths:
+      - 'backend/finance/**'
+      - '.github/workflows/finance.yml'
+
+jobs:
+  finance-contract-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/finance
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Run finance contract tests
+        run: bash run-tests.sh
