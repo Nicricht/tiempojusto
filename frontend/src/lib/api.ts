@@ -11,7 +11,7 @@ import type {
   SessionView,
 } from './types';
 
-const API_BASE_URL = (import.meta.env.VITE_TJ_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? 'http://localhost:8080';
+const API_BASE_URL = (import.meta.env.VITE_TJ_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 const DEV_MODE = import.meta.env.VITE_TJ_DEV_MODE === 'true';
 
 export class TiempoJustoApiError extends Error {
@@ -76,7 +76,7 @@ function json(body: unknown): RequestInit {
 }
 
 export const tiempoJustoApi = {
-  baseUrl: API_BASE_URL,
+  baseUrl: API_BASE_URL || window.location.origin,
   devMode: DEV_MODE,
 
   getAuction(auctionId: string): Promise<AuctionView> {
