@@ -104,19 +104,34 @@ jobs:
                   self.end_headers()
                   self.wfile.write(raw)
 
+              def read_body(self):
+                  if self.headers.get('Transfer-Encoding', '').lower() == 'chunked':
+                      chunks = []
+                      while True:
+                          size_line = self.rfile.readline().strip()
+                          size = int(size_line.split(b';', 1)[0], 16)
+                          if size == 0:
+                              while True:
+                                  trailer = self.rfile.readline()
+                                  if trailer in (b'\r\n', b'\n', b''):
+                                      break
+                              break
+                          chunks.append(self.rfile.read(size))
+                          self.rfile.read(2)
+                      return b''.join(chunks)
+                  length = int(self.headers.get('Content-Length', '0'))
+                  return self.rfile.read(length)
+
               def do_POST(self):
                   if self.path != '/v1/sessions':
                       return self.send_json(404, {'error':'not_found'})
                   if self.headers.get('X-AUTH-CLIENT') != API_KEY:
                       return self.send_json(401, {'error':'bad_client'})
-                  length = int(self.headers.get('Content-Length', '0'))
-                  body = self.rfile.read(length)
+                  body = self.read_body()
                   data = json.loads(body or b'{}')
                   verification = data.get('verification')
-                  # Veriff accepts an empty verification object. TiempoJusto sends
-                  # a non-semantic UUID as endUserId for correlation, so the CI
-                  # stub asserts only that documented field and does not require
-                  # duplicate vendorData.
+                  # TiempoJusto sends a non-semantic UUID as endUserId for
+                  # correlation and does not duplicate it in vendorData.
                   if not isinstance(verification, dict) or not verification.get('endUserId'):
                       print('invalid create-session payload:', data, flush=True)
                       return self.send_json(422, {'error':'missing_end_user_id'})
