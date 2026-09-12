@@ -27,9 +27,7 @@ function RowTable({ rows, empty = 'Sin resultados.' }: { rows: AdminRow[]; empty
   return (
     <div className="admin-table-wrap">
       <table className="admin-table">
-        <thead>
-          <tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr>
-        </thead>
+        <thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
         <tbody>
           {rows.map((row, index) => (
             <tr key={`${rowText(row, 'id')}-${rowText(row, 'task_id')}-${index}`}>
@@ -142,8 +140,8 @@ export default function AdminPage() {
     }, 'Tarea tomada y acción administrativa auditada.');
   }
 
-  async function loadCase(): Promise<void> {
-    const clean = caseId.trim();
+  async function loadCase(selectedCaseId = caseId): Promise<void> {
+    const clean = selectedCaseId.trim();
     if (!clean) return;
     await run(async () => {
       const [detail, timeline] = await Promise.all([
@@ -155,6 +153,11 @@ export default function AdminPage() {
       const severity = detail.severity;
       if (typeof severity === 'string') setDecisionSeverity(severity);
     });
+  }
+
+  function openCase(selectedCaseId: string): void {
+    setCaseId(selectedCaseId);
+    void loadCase(selectedCaseId);
   }
 
   async function decideCase(): Promise<void> {
@@ -310,7 +313,7 @@ export default function AdminPage() {
                         {rowText(task, 'task_status') === 'QUEUED' && (
                           <button className="button button-dark" disabled={busy} onClick={() => void claim(rowText(task, 'task_id'))}>Tomar</button>
                         )}
-                        <button className="button button-secondary" onClick={() => { setCaseId(rowText(task, 'safety_case_id')); void Promise.resolve().then(loadCase); }}>Abrir caso</button>
+                        <button className="button button-secondary" onClick={() => openCase(rowText(task, 'safety_case_id'))}>Abrir caso</button>
                       </div>
                     </div>
                   ))}
