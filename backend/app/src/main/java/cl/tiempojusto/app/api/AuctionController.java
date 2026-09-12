@@ -24,6 +24,15 @@ public class AuctionController {
         return ResponseEntity.ok(auctions.get(auctionId));
     }
 
+    @PostMapping("/{auctionId}/bids")
+    public ResponseEntity<AuctionApplicationService.BidResult> bid(
+            HttpServletRequest http,
+            @PathVariable UUID auctionId,
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @RequestBody AuctionApplicationService.BidRequest request) {
+        return ResponseEntity.ok(auctions.bid(actors.requireActor(http), auctionId, request, idempotencyKey));
+    }
+
     @PostMapping("/{auctionId}/close-now")
     public ResponseEntity<AuctionApplicationService.CloseNowResult> closeNow(
             HttpServletRequest http,

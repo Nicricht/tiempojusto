@@ -1,6 +1,9 @@
 package cl.tiempojusto.app.application;
 
 import cl.tiempojusto.app.api.ApiProblem;
+import cl.tiempojusto.finance.common.FinanceException;
+import cl.tiempojusto.finance.payment.BidReservationCoordinator;
+import cl.tiempojusto.finance.payment.BidReservationCoordinator.Coverage;
 import cl.tiempojusto.finance.payment.PaymentPort.Reservation;
 import cl.tiempojusto.finance.settlement.FinanceEngine;
 import cl.tiempojusto.statemachine.auction.Auction;
@@ -17,12 +20,16 @@ import java.util.UUID;
 public class AuctionApplicationService {
     private final JdbcTemplate jdbc;
     private final FinanceEngine finance;
+    private final BidReservationCoordinator bidReservations;
     private final ApplicationPersistenceSupport persistence;
 
-    public AuctionApplicationService(JdbcTemplate jdbc, FinanceEngine finance,
+    public AuctionApplicationService(JdbcTemplate jdbc,
+                                     FinanceEngine finance,
+                                     BidReservationCoordinator bidReservations,
                                      ApplicationPersistenceSupport persistence) {
         this.jdbc = jdbc;
         this.finance = finance;
+        this.bidReservations = bidReservations;
         this.persistence = persistence;
     }
 
@@ -66,11 +73,116 @@ public class AuctionApplicationService {
     }
 
     @Transactional
+    public BidResult bid(UUID bidderActorId, UUID auctionId, BidRequest request, String idempotencyKey) {
+        requireEligibleBidder(bidderActorId);
+        requireIdempotencyKey(idempotencyKey, "Bid");
+        if (request == null || request.amountClp() <= 0 || request.amountClp() % 5_000 != 0) {
+            throw ApiProblem.badRequest("BID_AMOUNT_INVALID", "La Bid debe ser positiva y múltiplo de CLP 5.000.");
+        }
+
+        ExistingBid replay = existingBidByIdempotency(idempotencyKey);
+        if (replay != null) {
+            if (!replay.auctionId().equals(auctionId)
+                    || !replay.bidderUserId().equals(bidderActorId)
+                    || replay.amountClp() != request.amountClp()) {
+                throw ApiProblem.conflict("IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD",
+                        "Idempotency-Key ya fue usado para otra Bid.");
+            }
+            return new BidResult(get(auctionId), replay.id(), replay.amountClp(), replay.serverSequence(),
+                    replay.fundsReservationId(), "REPLAY", false, true);
+        }
+
+        AuctionRow row = lockAuction(auctionId);
+        Instant now = Instant.now();
+        if (!"OPEN".equals(row.status())) {
+            throw ApiProblem.conflict("AUCTION_NOT_OPEN", "Auction no está abierta.");
+        }
+        if (now.isAfter(row.effectiveEndAt())) {
+            throw ApiProblem.conflict("AUCTION_DEADLINE_PASSED", "Auction ya alcanzó su deadline efectivo.");
+        }
+        if (row.hostUserId().equals(bidderActorId)) {
+            throw ApiProblem.forbidden("SELF_BID_FORBIDDEN", "HOST no puede pujar en su propia Auction.");
+        }
+        if (request.amountClp() < row.nextActionableAmountClp()) {
+            throw ApiProblem.conflict("BID_TOO_LOW",
+                    "La Bid mínima accionable es CLP " + row.nextActionableAmountClp() + ".");
+        }
+
+        jdbc.update("""
+                insert into auction.auction_participant(
+                    auction_id, bidder_user_id, eligibility_status, joined_at, last_active_at)
+                values (?, ?, 'ELIGIBLE', ?, ?)
+                on conflict (auction_id, bidder_user_id) do update
+                    set eligibility_status = 'ELIGIBLE', last_active_at = excluded.last_active_at
+                """, auctionId, bidderActorId, Timestamp.from(now), Timestamp.from(now));
+
+        UUID priorReservationId = latestActiveReservationForBidder(auctionId, bidderActorId);
+        Coverage coverage;
+        try {
+            coverage = bidReservations.cover(
+                    bidderActorId,
+                    priorReservationId,
+                    request.amountClp(),
+                    "api:bid:" + idempotencyKey,
+                    now
+            );
+        } catch (FinanceException ex) {
+            throw fundingProblem(ex);
+        }
+
+        persistCoverage(auctionId, bidderActorId, request.amountClp(), idempotencyKey, now, coverage);
+
+        UUID bidId = UUID.randomUUID();
+        jdbc.update("""
+                insert into auction.bid(
+                    id, auction_id, bidder_user_id, amount_clp, bid_type, status,
+                    funds_reservation_id, server_sequence, idempotency_key)
+                values (?, ?, ?, ?, 'NORMAL', 'VALID', ?, 0, ?)
+                """, bidId, auctionId, bidderActorId, request.amountClp(), coverage.reservation().id(), idempotencyKey);
+
+        ExistingBid inserted = jdbc.query("""
+                select id, auction_id, bidder_user_id, amount_clp, server_sequence, funds_reservation_id
+                  from auction.bid where id = ?
+                """, (rs, n) -> new ExistingBid(
+                rs.getObject("id", UUID.class),
+                rs.getObject("auction_id", UUID.class),
+                rs.getObject("bidder_user_id", UUID.class),
+                rs.getLong("amount_clp"),
+                rs.getLong("server_sequence"),
+                rs.getObject("funds_reservation_id", UUID.class)), bidId).getFirst();
+
+        AuctionView updated = get(auctionId);
+        boolean timerReset = updated.effectiveEndAt().isAfter(row.effectiveEndAt());
+
+        persistence.audit(bidderActorId, "AUCTION_BID_ACCEPTED", "AUCTION", auctionId,
+                Map.of("bidId", bidId.toString(),
+                        "amountClp", request.amountClp(),
+                        "serverSequence", inserted.serverSequence(),
+                        "reservationStrategy", coverage.strategy().name()));
+        persistence.outbox("AUCTION", auctionId, "BID_ACCEPTED",
+                Map.of("auctionId", auctionId.toString(),
+                        "bidId", bidId.toString(),
+                        "bidderUserId", bidderActorId.toString(),
+                        "amountClp", request.amountClp(),
+                        "serverSequence", inserted.serverSequence()));
+        persistence.outbox("AUCTION", auctionId, "POZO_UPDATED",
+                Map.of("auctionId", auctionId.toString(),
+                        "currentAmountClp", updated.currentAmountClp(),
+                        "nextActionableAmountClp", updated.nextActionableAmountClp()));
+        if (timerReset) {
+            persistence.outbox("AUCTION", auctionId, "TIMER_RESET_2M",
+                    Map.of("auctionId", auctionId.toString(),
+                            "effectiveEndAt", updated.effectiveEndAt().toString()));
+        }
+
+        return new BidResult(updated, bidId, request.amountClp(), inserted.serverSequence(),
+                coverage.reservation().id(), coverage.strategy().name(), timerReset, false);
+    }
+
+    @Transactional
     public CloseNowResult closeNow(UUID bidderActorId, UUID auctionId, String idempotencyKey) {
         requireEligibleBidder(bidderActorId);
-        if (idempotencyKey == null || idempotencyKey.isBlank()) {
-            throw ApiProblem.badRequest("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key requerido para Close Now.");
-        }
+        requireIdempotencyKey(idempotencyKey, "Close Now");
 
         AuctionRow row = lockAuction(auctionId);
         if (!"OPEN".equals(row.status())) throw ApiProblem.conflict("AUCTION_NOT_OPEN", "Auction no está abierta.");
@@ -89,14 +201,19 @@ public class AuctionApplicationService {
         }
 
         Instant now = Instant.now();
-        Reservation reservation = finance.reserveBid(
-                bidderActorId, row.closeNowAmountClp(), "api:close-now:" + idempotencyKey, now);
+        Reservation reservation;
+        try {
+            reservation = finance.reserveBid(
+                    bidderActorId, row.closeNowAmountClp(), "api:close-now:" + idempotencyKey, now);
+        } catch (FinanceException ex) {
+            throw fundingProblem(ex);
+        }
         jdbc.update("""
                 insert into auction.funds_reservation(
                     id, user_id, provider_code, provider_reference, amount_clp,
                     status, purpose_type, purpose_id, reserved_at)
-                values (?, ?, 'MOCK', ?, ?, 'RESERVED', 'AUCTION_CLOSE_NOW', ?, ?)
-                """, reservation.id(), bidderActorId, "mock:" + reservation.id(),
+                values (?, ?, 'PAYMENT_PORT', ?, ?, 'RESERVED', 'AUCTION_CLOSE_NOW', ?, ?)
+                """, reservation.id(), bidderActorId, "paymentport:" + reservation.id(),
                 reservation.authorizedAmountClp(), auctionId, Timestamp.from(now));
 
         jdbc.update("""
@@ -168,12 +285,87 @@ public class AuctionApplicationService {
         return rows.getFirst();
     }
 
+    private void persistCoverage(UUID auctionId,
+                                 UUID bidderActorId,
+                                 long amountClp,
+                                 String idempotencyKey,
+                                 Instant now,
+                                 Coverage coverage) {
+        UUID reservationId = coverage.reservation().id();
+        if (coverage.strategy() == BidReservationCoordinator.Strategy.ADJUSTED) {
+            int updated = jdbc.update("""
+                    update auction.funds_reservation
+                       set amount_clp = ?, status = 'RESERVED', reserved_at = coalesce(reserved_at, ?)
+                     where id = ? and user_id = ?
+                    """, coverage.reservation().authorizedAmountClp(), Timestamp.from(now),
+                    reservationId, bidderActorId);
+            if (updated != 1) {
+                throw new IllegalStateException("Adjusted provider reservation has no local funds_reservation row");
+            }
+            return;
+        }
+
+        jdbc.update("""
+                insert into auction.funds_reservation(
+                    id, user_id, provider_code, provider_reference, amount_clp,
+                    status, purpose_type, purpose_id, reserved_at)
+                values (?, ?, 'PAYMENT_PORT', ?, ?, 'RESERVED', 'AUCTION_BID', ?, ?)
+                """, reservationId, bidderActorId, "paymentport:" + reservationId,
+                coverage.reservation().authorizedAmountClp(), auctionId, Timestamp.from(now));
+
+        if (coverage.strategy() == BidReservationCoordinator.Strategy.REPLACEMENT) {
+            jdbc.update("""
+                    insert into auction.reservation_replacement(
+                        id, auction_id, bidder_user_id, prior_reservation_id,
+                        replacement_reservation_id, target_amount_clp, state, idempotency_key)
+                    values (?, ?, ?, ?, ?, ?, 'RELEASE_PENDING', ?)
+                    """, UUID.randomUUID(), auctionId, bidderActorId, coverage.supersededReservationId(),
+                    reservationId, amountClp, idempotencyKey);
+        }
+    }
+
+    private UUID latestActiveReservationForBidder(UUID auctionId, UUID bidderUserId) {
+        return jdbc.query("""
+                select b.funds_reservation_id
+                  from auction.bid b
+                  join auction.funds_reservation fr on fr.id = b.funds_reservation_id
+                 where b.auction_id = ?
+                   and b.bidder_user_id = ?
+                   and b.status in ('VALID','WINNING','OUTBID')
+                   and fr.status = 'RESERVED'
+                 order by b.server_sequence desc
+                 limit 1
+                """, rs -> rs.next() ? rs.getObject(1, UUID.class) : null, auctionId, bidderUserId);
+    }
+
+    private ExistingBid existingBidByIdempotency(String idempotencyKey) {
+        return jdbc.query("""
+                select id, auction_id, bidder_user_id, amount_clp, server_sequence, funds_reservation_id
+                  from auction.bid where idempotency_key = ?
+                """, rs -> rs.next() ? new ExistingBid(
+                rs.getObject("id", UUID.class),
+                rs.getObject("auction_id", UUID.class),
+                rs.getObject("bidder_user_id", UUID.class),
+                rs.getLong("amount_clp"),
+                rs.getLong("server_sequence"),
+                rs.getObject("funds_reservation_id", UUID.class)) : null, idempotencyKey);
+    }
+
     private AuctionRow lockAuction(UUID auctionId) {
         var rows = jdbc.query("""
-                select id, host_user_id, duration_minutes, instant_close_amount_clp, status::text
+                select id, host_user_id, duration_minutes, current_amount_clp,
+                       next_actionable_amount_clp, instant_close_amount_clp,
+                       effective_end_at, status::text
                   from auction.auction where id = ? for update
-                """, (rs, n) -> new AuctionRow(rs.getObject("id", UUID.class), rs.getObject("host_user_id", UUID.class),
-                rs.getInt("duration_minutes"), (Long) rs.getObject("instant_close_amount_clp"), rs.getString("status")), auctionId);
+                """, (rs, n) -> new AuctionRow(
+                rs.getObject("id", UUID.class),
+                rs.getObject("host_user_id", UUID.class),
+                rs.getInt("duration_minutes"),
+                rs.getLong("current_amount_clp"),
+                rs.getLong("next_actionable_amount_clp"),
+                (Long) rs.getObject("instant_close_amount_clp"),
+                rs.getTimestamp("effective_end_at").toInstant(),
+                rs.getString("status")), auctionId);
         if (rows.isEmpty()) throw ApiProblem.notFound("AUCTION_NOT_FOUND", "Auction no existe.");
         return rows.getFirst();
     }
@@ -211,11 +403,32 @@ public class AuctionApplicationService {
         }
     }
 
+    private static void requireIdempotencyKey(String key, String operation) {
+        if (key == null || key.isBlank()) {
+            throw ApiProblem.badRequest("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key requerido para " + operation + ".");
+        }
+    }
+
+    private static ApiProblem fundingProblem(FinanceException ex) {
+        if (ex.code().contains("TIMEOUT") || ex.code().contains("UNAVAILABLE")) {
+            return ApiProblem.unavailable(ex.code(), ex.getMessage());
+        }
+        return ApiProblem.conflict(ex.code(), ex.getMessage());
+    }
+
     private record HostRow(UUID userId, String profileStatus, boolean supportsOnline, String accountStatus, boolean verified) {}
     private record BidderRow(String role, String accountStatus, boolean verified) {}
-    private record AuctionRow(UUID id, UUID hostUserId, int durationMinutes, Long closeNowAmountClp, String status) {}
+    private record AuctionRow(UUID id, UUID hostUserId, int durationMinutes, long currentAmountClp,
+                              long nextActionableAmountClp, Long closeNowAmountClp,
+                              Instant effectiveEndAt, String status) {}
+    private record ExistingBid(UUID id, UUID auctionId, UUID bidderUserId, long amountClp,
+                               long serverSequence, UUID fundsReservationId) {}
 
     public record OpenRequest(UUID hostProfileId, int durationMinutes, long openingAmountClp, Long closeNowAmountClp) {}
+    public record BidRequest(long amountClp) {}
+    public record BidResult(AuctionView auction, UUID bidId, long amountClp, long serverSequence,
+                            UUID fundsReservationId, String reservationStrategy,
+                            boolean timerReset, boolean replayed) {}
     public record CloseNowResult(AuctionView auction, UUID appointmentId, UUID bidId, boolean replayed) {}
     public record AuctionView(UUID id, UUID hostUserId, String modality, int durationMinutes,
                               long openingAmountClp, long currentAmountClp, long nextActionableAmountClp,
