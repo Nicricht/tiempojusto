@@ -4,9 +4,9 @@ Repositorio técnico del proyecto **TiempoJusto**.
 
 ## Estado actual
 
-TiempoJusto ya pasó de definición funcional a una integración ejecutable con una primera vertical slice Online persistente, una vertical slice financiera persistente y el Admin mínimo P2.2 para Safety/HumanReview. El repositorio contiene schema PostgreSQL/PostGIS, máquinas de estado Java 21, Finance/Ledger core, OpenAPI REST V1, WebSocket V1, Geo/ETA V1, WebRTC/Media V1, wireframes UX P2.1, runtime Spring Boot, application services para el recorrido Online, autenticación OAuth2/JWT provider-neutral, Pause/Reconnect/Resume Online persistente, settlement/ledger PostgreSQL V1.5 y HumanReviewQueue con auditoría financiera read-only.
+TiempoJusto ya pasó de definición funcional a una integración ejecutable con una primera vertical slice Online persistente, una vertical slice financiera persistente, Admin mínimo P2.2 para Safety/HumanReview y el primer corte de P2.3 Provider Adapters para pagos. El repositorio contiene schema PostgreSQL/PostGIS, máquinas de estado Java 21, Finance/Ledger core, OpenAPI REST V1, WebSocket V1, Geo/ETA V1, WebRTC/Media V1, wireframes UX P2.1, runtime Spring Boot, application services para el recorrido Online, OAuth2/JWT provider-neutral, Pause/Reconnect/Resume Online persistente, settlement/ledger PostgreSQL V1.5, HumanReviewQueue y bindings de proveedor de pago V1.6.
 
-`Runtime Integration` ejecuta el schema y las migraciones hasta V1.5 sobre PostgreSQL 16 + PostGIS real, compila el reactor Java, inicia el JAR, exige `/actuator/health = UP`, mantiene el Golden Path sandbox y recorre el flujo persistente Online. `Auth Integration` valida JWT firmado, issuer/audience, mapping `iss + sub` contra IAM, bloqueo del header técnico y refresh OAuth2. `Online Reconnect Integration` recorre microcorte, interrupción, recuperación, aceptación bilateral, reanudación y timeout. `Persistent Settlement Integration` valida liquidación, double-entry, payout pending/available, objective holds, zero billing y bloqueo de redondeo no definido. `Admin Human Review Integration` valida S5 -> HumanReviewQueue, claim humano, evidencia, decisión auditable y finanzas Admin de solo lectura.
+`Runtime Integration` ejecuta el schema y las migraciones operativas del runtime sobre PostgreSQL 16 + PostGIS real, compila el reactor Java, inicia el JAR, exige `/actuator/health = UP`, mantiene el Golden Path sandbox y recorre el flujo persistente Online. `Payment Provider Adapters` ejecuta Finance + contract tests del adapter, aplica schema + migraciones hasta V1.6 en PostgreSQL 16/PostGIS y compila el backend integrado. `Auth Integration`, `Online Reconnect Integration`, `Persistent Settlement Integration` y `Admin Human Review Integration` continúan validando sus invariantes de forma independiente.
 
 ## Estructura principal
 
@@ -22,14 +22,16 @@ TiempoJusto ya pasó de definición funcional a una integración ejecutable con 
   Invariantes físicos para segmentos PAID/RECONNECT e interrupciones Online persistentes.
 - `database/migrations/V1_5__persistent_session_settlement.sql`
   Settlement de sesión, tracking de reserva, ledger/payout availability y objective payout holds.
+- `database/migrations/V1_6__payment_provider_bindings.sql`
+  Bindings durables entre UUID internos y referencias opacas del proveedor, sin PAN/CVV ni tokens de tarjeta persistidos.
 - `backend/pom.xml`
   Reactor Maven para State Machines, Finance, Geo, Media y la aplicación integrada.
 - `backend/app/`
-  Runtime Spring Boot Java 21 con datasource PostgreSQL, health, application services, OAuth2 Resource Server, endpoints HTTP, reconnect/settlement/payout watchers, HumanReviewQueue y transactional outbox/audit.
+  Runtime Spring Boot Java 21 con datasource PostgreSQL, health, application services, OAuth2 Resource Server, endpoints HTTP, reconnect/settlement/payout watchers, HumanReviewQueue, transactional outbox/audit y seams de provider adapters.
 - `backend/state-machines/`
   Máquinas de estado Java 21 y 34 contract tests.
 - `backend/finance/`
-  Ledger de doble entrada, PaymentPort agnóstico, MockPaymentPort y 22 contract tests.
+  Ledger de doble entrada, PaymentPort agnóstico, MockPaymentPort y primer adapter candidato de Mercado Pago con capabilities fail-closed.
 - `backend/geo/`
   Geo Core Java 21, RoutingPort, MockRoutingPort y 12 contract tests.
 - `backend/media/`
@@ -42,6 +44,8 @@ TiempoJusto ya pasó de definición funcional a una integración ejecutable con 
   Trazabilidad de los wireframes P2.1 y enlace al archivo Figma editable.
 - `docs/admin/P2_2_ADMIN_HUMAN_REVIEW_QUEUE_V1.md`
   Alcance Admin P2.2: HumanReviewQueue, evidencia, decisiones, appeals, RiskSignal privado y auditoría financiera read-only.
+- `docs/providers/P2_3_PAYMENT_PROVIDER_ADAPTERS_V1.md`
+  Primer corte P2.3: capabilities, adapter candidato Mercado Pago, Flow como candidato pendiente y bloqueadores antes de mover dinero real.
 - `docs/runtime/RUNTIME_INTEGRATION_V1.md`
   Ejecución local, límites de adapters mock y alcance del runtime V1.
 - `docs/runtime/GOLDEN_PATH_ONLINE_V1.md`
@@ -69,11 +73,13 @@ Incluye onboarding/KYC, discovery, mapa aproximado, perfil, Proposal, Disponible
 | Producto / reglas V1.7 | ✅ definido |
 | ER físico V1.0 | ✅ diseñado |
 | PostgreSQL/PostGIS V1.0 + migraciones V1.1-V1.5 | ✅ ejecutado en PostgreSQL 16/PostGIS por CI |
+| Payment provider bindings V1.6 | ✅ migración + validación PostgreSQL/PostGIS en CI P2.3 |
 | OAuth identity V1.3 | ✅ migración y lookup IAM |
 | Online reconnect persistence V1.4 | ✅ migración y Golden Path en PostgreSQL/PostGIS CI |
 | Persistent settlement / Ledger V1.5 | ✅ migración y Golden Path financiero en PostgreSQL/PostGIS CI |
 | State Machines Java 21 | ✅ 34/34 tests |
 | Ledger + PaymentPort Mock | ✅ 22/22 tests |
+| Payment provider adapter candidate V1 | ✅ reserve/capture/release/refund + fail-closed capabilities |
 | OpenAPI REST V1 | ✅ implementado |
 | WebSocket V1 | ✅ implementado |
 | Geo / routing / ETA V1 | ✅ 12/12 tests |
@@ -99,7 +105,9 @@ Incluye onboarding/KYC, discovery, mapa aproximado, perfil, Proposal, Disponible
 | Refresh-token OAuth2 adapter | ✅ contrato implementado; proveedor definitivo pendiente |
 | Proveedor OAuth2/OIDC definitivo | pendiente |
 | KYC real | pendiente |
-| PaymentPort / payout provider reales | pendiente |
+| PaymentPort / payout provider de producción | pendiente |
+| Sandbox real del proveedor de pago | pendiente |
+| Protocolo de reemplazo/aumento de reserva para nuevas Bid | pendiente |
 | Envío bancario real de payout | pendiente |
 | Routing/ETA real | pendiente |
 | WebRTC/TURN real | pendiente |
@@ -112,7 +120,7 @@ Incluye onboarding/KYC, discovery, mapa aproximado, perfil, Proposal, Disponible
 | Security / E2E ampliados / observability | pendiente |
 | Staging / piloto | pendiente |
 
-> La validación PostgreSQL indicada es reproducible en CI y no equivale a staging o producción. Los endpoints `sandbox` y los adapters Mock siguen sin procesar identidad, pagos, routing o media reales. El ledger y los estados financieros de aplicación sí quedan persistidos en PostgreSQL, pero `MockPaymentPort` continúa siendo un adapter de prueba en los perfiles actuales y no reemplaza un proveedor de pago/payout real. OAuth2/JWT ya valida tokens firmados, aunque todavía no se selecciona el proveedor OAuth2/OIDC de producción. El endpoint HTTP de `media-signal` es un seam técnico hasta seleccionar WebRTC/TURN real y no analiza ni almacena contenido audiovisual. El Admin P2.2 implementado es backend operativo mínimo; la UI productiva de administración sigue pendiente.
+> La validación PostgreSQL indicada es reproducible en CI y no equivale a staging o producción. El adapter candidato de Mercado Pago NO activa dinero real y no contiene credenciales. Los perfiles actuales continúan usando `MockPaymentPort`. El candidate adapter únicamente habilita reserva/autorización, captura final, liberación y refund; `ADJUST_RESERVATION`, `PAYOUT` y creación remota de dispute fallan cerrado hasta demostrar equivalencia segura con V1.7. El ledger y los estados financieros internos sí quedan persistidos en PostgreSQL. OAuth2/JWT valida tokens firmados, aunque todavía no se selecciona el proveedor OAuth2/OIDC de producción. El endpoint HTTP de `media-signal` sigue siendo un seam técnico hasta seleccionar WebRTC/TURN real. El Admin P2.2 implementado es backend operativo mínimo; la UI productiva de administración sigue pendiente.
 
 ## Ejecutar módulos
 
@@ -135,6 +143,7 @@ psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/m
 psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_3__oauth2_identity.sql
 psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_4__online_reconnect_persistence.sql
 psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_5__persistent_session_settlement.sql
+psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_6__payment_provider_bindings.sql
 
 mvn -B -f backend/pom.xml -DskipTests package
 SPRING_PROFILES_ACTIVE=dev java -jar backend/app/target/tiempojusto-app-1.0.0.jar
@@ -165,12 +174,12 @@ El refresh-token adapter se configura con el token endpoint del proveedor y nunc
 
 ## Próximo hito
 
-P2.2 Admin / HumanReviewQueue ya materializa el mínimo operativo para S5, evidencia, apelaciones, RiskSignal privado y auditoría financiera read-only. El siguiente hito canónico es **P2.3 Provider Adapters**.
+P2.3 Provider Adapters ya tiene materializado su primer corte de pagos: contrato de capacidades fail-closed, candidate adapter Mercado Pago, transporte HTTPS, persistencia de bindings e integración CI. **Esto no equivale a un proveedor de pago/payout de producción activo.**
 
-Orden recomendado:
+Siguiente orden recomendado:
 
-`PaymentPort/payout provider real -> KYC real -> Routing/ETA real -> WebRTC/TURN real -> frontend conectado`
+`validación comercial + sandbox real PaymentPort -> protocolo seguro para aumentar/reemplazar reserva de Bid -> payout controlado -> KYC real -> Routing/ETA real -> WebRTC/TURN real -> frontend conectado`
 
-La selección de proveedor debe respetar los puertos ya definidos y no cambiar reglas V1.7. Antes de activar dinero real, la arquitectura de captura/reserva/settlement debe garantizar que TiempoJusto nunca prometa un payout que no esté respaldado por fondos efectivamente capturados o reservados por el proveedor.
+Antes de activar dinero real, TiempoJusto debe comprobar que una Bid nunca quede descubierta y que ningún payout se prometa sin fondos efectivamente capturados. El proveedor/payout definitivo también debe preservar `PENDING -> AVAILABLE >=60m` y `HELD_FOR_REVIEW`.
 
 La liquidación proporcional que produzca una fracción no entera de CLP continúa bloqueada como `PENDING_ROUNDING_POLICY` hasta que producto congele la regla exacta de redondeo.

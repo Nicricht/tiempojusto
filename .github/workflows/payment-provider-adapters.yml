@@ -1,0 +1,66 @@
+name: Payment Provider Adapters
+
+on:
+  push:
+    paths:
+      - 'backend/finance/**'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/payment/**'
+      - 'database/migrations/V1_6__payment_provider_bindings.sql'
+      - 'docs/providers/**'
+      - '.github/workflows/payment-provider-adapters.yml'
+  pull_request:
+    paths:
+      - 'backend/finance/**'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/payment/**'
+      - 'database/migrations/V1_6__payment_provider_bindings.sql'
+      - 'docs/providers/**'
+      - '.github/workflows/payment-provider-adapters.yml'
+
+jobs:
+  provider-adapters:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_DB: tiempojusto
+          POSTGRES_USER: tiempojusto
+          POSTGRES_PASSWORD: tiempojusto
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tiempojusto -d tiempojusto"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run Finance + provider adapter contracts
+        working-directory: backend/finance
+        run: bash run-tests.sh
+
+      - name: Apply schema and migrations through V1.6
+        env:
+          PGPASSWORD: tiempojusto
+        run: |
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/schema/TiempoJusto_PostgreSQL_Schema_V1_0.sql
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_1__geo_routing_eta.sql
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_2__webrtc_media.sql
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_3__oauth2_identity.sql
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_4__online_reconnect_persistence.sql
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_5__persistent_session_settlement.sql
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/migrations/V1_6__payment_provider_bindings.sql
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -Atc "SELECT to_regclass('finance.provider_reservation_binding') IS NOT NULL AND to_regclass('finance.provider_capture_binding') IS NOT NULL AND to_regclass('finance.provider_refund_binding') IS NOT NULL" | grep -qx t
+
+      - name: Compile integrated backend
+        run: mvn -B -f backend/pom.xml -DskipTests package
