@@ -25,6 +25,12 @@ public class BidReservationReleaseService {
     @Scheduled(fixedDelayString = "${tiempojusto.auction.reservation-release-delay-ms:5000}")
     @Transactional
     public void processPending() {
+        Boolean tableReady = jdbc.queryForObject(
+                "select to_regclass('auction.reservation_replacement') is not null",
+                Boolean.class
+        );
+        if (!Boolean.TRUE.equals(tableReady)) return;
+
         List<Row> rows = jdbc.query("""
                 select id, prior_reservation_id
                   from auction.reservation_replacement
