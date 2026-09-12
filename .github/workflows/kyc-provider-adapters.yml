@@ -112,9 +112,14 @@ jobs:
                   length = int(self.headers.get('Content-Length', '0'))
                   body = self.rfile.read(length)
                   data = json.loads(body or b'{}')
-                  verification = data.get('verification') or {}
-                  if not verification.get('vendorData') or not verification.get('endUserId'):
-                      return self.send_json(422, {'error':'missing_external_id'})
+                  verification = data.get('verification')
+                  # Veriff accepts an empty verification object. TiempoJusto sends
+                  # a non-semantic UUID as endUserId for correlation, so the CI
+                  # stub asserts only that documented field and does not require
+                  # duplicate vendorData.
+                  if not isinstance(verification, dict) or not verification.get('endUserId'):
+                      print('invalid create-session payload:', data, flush=True)
+                      return self.send_json(422, {'error':'missing_end_user_id'})
                   return self.send_json(200, {'verification': {
                       'id': SESSION,
                       'url': 'https://verify.example/session/' + SESSION
@@ -223,5 +228,6 @@ jobs:
         if: failure()
         run: |
           cat /tmp/kyc-start.json || true
+          cat /tmp/kyc-webhook.json || true
           cat /tmp/tiempojusto-kyc.log || true
           cat /tmp/veriff-stub.log || true
