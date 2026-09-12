@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   secrets:
@@ -22,14 +21,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   dependencies:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Dependency review
-        uses: actions/dependency-review-action@v4
+      - name: Scan repository dependencies for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
         with:
-          fail-on-severity: high
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: false
 
   frontend-audit:
     runs-on: ubuntu-latest
@@ -38,8 +41,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+      - name: Resolve frontend dependency graph for audit
+        working-directory: frontend
+        run: npm install --package-lock-only --ignore-scripts --no-fund
       - name: Audit production frontend dependencies
         working-directory: frontend
         run: npm audit --omit=dev --audit-level=high
