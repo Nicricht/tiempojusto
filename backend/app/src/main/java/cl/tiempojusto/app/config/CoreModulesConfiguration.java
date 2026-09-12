@@ -1,6 +1,7 @@
 package cl.tiempojusto.app.config;
 
 import cl.tiempojusto.finance.ledger.InMemoryLedger;
+import cl.tiempojusto.finance.payment.BidReservationCoordinator;
 import cl.tiempojusto.finance.payment.MockPaymentPort;
 import cl.tiempojusto.finance.payment.PaymentPort;
 import cl.tiempojusto.finance.settlement.FinanceEngine;
@@ -29,6 +30,11 @@ public class CoreModulesConfiguration {
     @Bean
     public FinanceEngine financeEngine(PaymentPort paymentPort, InMemoryLedger ledger) {
         return new FinanceEngine(paymentPort, ledger);
+    }
+
+    @Bean
+    public BidReservationCoordinator bidReservationCoordinator(PaymentPort paymentPort) {
+        return new BidReservationCoordinator(paymentPort);
     }
 
     @Bean
