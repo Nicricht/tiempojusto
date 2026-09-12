@@ -1,0 +1,47 @@
+name: Frontend CI
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-ci.yml'
+      - '.gitignore'
+  push:
+    branches: [ main ]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend-ci.yml'
+      - '.gitignore'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck and build
+        working-directory: frontend
+        env:
+          VITE_TJ_DEV_MODE: 'false'
+          VITE_TJ_API_BASE_URL: ''
+        run: npm run build
+
+      - name: Verify production artifact
+        run: |
+          set -euo pipefail
+          test -f frontend/dist/index.html
+          test -d frontend/dist/assets
+          test -n "$(find frontend/dist/assets -maxdepth 1 -type f -name '*.js' -print -quit)"
+          test -n "$(find frontend/dist/assets -maxdepth 1 -type f -name '*.css' -print -quit)"
