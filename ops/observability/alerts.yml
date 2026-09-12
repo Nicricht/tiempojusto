@@ -1,0 +1,82 @@
+groups:
+  - name: tiempojusto-staging
+    rules:
+      - alert: TiempoJustoBackendDown
+        expr: up{job="tiempojusto-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: TiempoJusto backend is not scrapeable
+
+      - alert: TiempoJustoHighServerErrorRate
+        expr: |
+          sum(rate(tiempojusto_domain_requests_total{status_family="5xx"}[5m]))
+          /
+          clamp_min(sum(rate(tiempojusto_domain_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: More than 5% of TiempoJusto HTTP traffic is returning 5xx
+
+      - alert: TiempoJustoAuthFailureBurst
+        expr: sum(increase(tiempojusto_domain_requests_total{domain="auth",status_family=~"4xx|5xx"}[5m])) > 20
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Authentication failures increased sharply
+
+      - alert: TiempoJustoAuctionFailureBurst
+        expr: sum(increase(tiempojusto_domain_requests_total{domain="auction",status_family="5xx"}[5m])) > 3
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Auction operations are failing
+
+      - alert: TiempoJustoSessionFailureBurst
+        expr: sum(increase(tiempojusto_domain_requests_total{domain="session",status_family="5xx"}[5m])) > 3
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Session operations are failing
+
+      - alert: TiempoJustoPaymentWebhookFailure
+        expr: sum(increase(tiempojusto_domain_requests_total{domain="payment_webhook",status_family=~"4xx|5xx"}[10m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: A payment-provider webhook was rejected or failed
+
+      - alert: TiempoJustoKycWebhookFailure
+        expr: sum(increase(tiempojusto_domain_requests_total{domain="kyc_webhook",status_family=~"4xx|5xx"}[10m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: A KYC-provider webhook was rejected or failed
+
+      - alert: TiempoJustoSettlementRetry
+        expr: increase(tiempojusto_settlement_attempts_total{result="retry"}[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Session settlement required a retry
+
+      - alert: TiempoJustoPayoutReleaseRetry
+        expr: increase(tiempojusto_payout_release_attempts_total{result="retry"}[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: Payout availability release required a retry
+
+      - alert: TiempoJustoRateLimitBurst
+        expr: sum(increase(tiempojusto_rate_limit_rejected_total[5m])) > 50
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Rate-limit rejections increased sharply

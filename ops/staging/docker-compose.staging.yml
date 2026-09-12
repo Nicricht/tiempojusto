@@ -1,0 +1,183 @@
+name: tiempojusto-staging
+
+services:
+  postgres:
+    image: postgis/postgis:16-3.5
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tiempojusto
+      POSTGRES_USER: tiempojusto
+      POSTGRES_PASSWORD: ${TJ_DB_PASSWORD:?TJ_DB_PASSWORD must come from the staging secret store}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tiempojusto -d tiempojusto"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  migrate:
+    image: postgres:16-alpine
+    working_dir: /workspace
+    command: ["/bin/sh", "/workspace/ops/db/migrate.sh"]
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: tiempojusto
+      PGUSER: tiempojusto
+      PGPASSWORD: ${TJ_DB_PASSWORD:?TJ_DB_PASSWORD must come from the staging secret store}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ../..:/workspace:ro
+    restart: "no"
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: backend/app/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      SPRING_PROFILES_ACTIVE: staging
+      TJ_ENVIRONMENT: staging
+      TJ_DB_URL: jdbc:postgresql://postgres:5432/tiempojusto
+      TJ_DB_USER: tiempojusto
+      TJ_DB_PASSWORD: ${TJ_DB_PASSWORD:?TJ_DB_PASSWORD must come from the staging secret store}
+      TJ_MANAGEMENT_PORT: "8081"
+      TJ_VERIFY_DATABASE: "true"
+      TJ_LOG_FORMAT: logstash
+      TJ_AUTH_DEV_HEADER_ENABLED: "false"
+      TJ_AUTH_JWT_ENABLED: "true"
+      TJ_AUTH_JWT_ISSUER: ${TJ_AUTH_JWT_ISSUER:?Configure the sandbox OAuth/OIDC issuer}
+      TJ_AUTH_JWT_AUDIENCE: ${TJ_AUTH_JWT_AUDIENCE:?Configure the sandbox OAuth/OIDC audience}
+      TJ_AUTH_JWT_JWK_SET_URI: ${TJ_AUTH_JWT_JWK_SET_URI:?Configure the sandbox JWKS URI}
+      TJ_AUTH_REFRESH_ENABLED: ${TJ_AUTH_REFRESH_ENABLED:-false}
+      TJ_AUTH_REFRESH_TOKEN_URI: ${TJ_AUTH_REFRESH_TOKEN_URI:-}
+      TJ_AUTH_REFRESH_CLIENT_ID: ${TJ_AUTH_REFRESH_CLIENT_ID:-}
+      TJ_AUTH_REFRESH_CLIENT_SECRET: ${TJ_AUTH_REFRESH_CLIENT_SECRET:-}
+      TJ_CORS_ALLOWED_ORIGINS: https://${TJ_STAGING_HOST:?TJ_STAGING_HOST is required}
+      TJ_RATE_LIMIT_ENABLED: "true"
+      TJ_KYC_PROVIDER: ${TJ_KYC_PROVIDER:?Configure the real KYC sandbox provider}
+      TJ_KYC_CALLBACK_URL: https://${TJ_STAGING_HOST:?TJ_STAGING_HOST is required}/api/v1/webhooks/kyc/${TJ_KYC_PROVIDER:?Configure KYC provider}
+      TJ_KYC_VERIFF_BASE_URL: ${TJ_KYC_VERIFF_BASE_URL:-}
+      TJ_KYC_VERIFF_API_KEY: ${TJ_KYC_VERIFF_API_KEY:-}
+      TJ_KYC_VERIFF_SHARED_SECRET: ${TJ_KYC_VERIFF_SHARED_SECRET:-}
+      TJ_PAYMENT_PROVIDER: ${TJ_PAYMENT_PROVIDER:?Configure the real payment sandbox provider}
+      TJ_PAYMENT_MP_BASE_URL: ${TJ_PAYMENT_MP_BASE_URL:-https://api.mercadopago.com}
+      TJ_PAYMENT_MP_ACCESS_TOKEN: ${TJ_PAYMENT_MP_ACCESS_TOKEN:-}
+      TJ_PAYMENT_MP_WEBHOOK_SECRET: ${TJ_PAYMENT_MP_WEBHOOK_SECRET:-}
+      TJ_PAYMENT_SANDBOX_PROBE_ENABLED: ${TJ_PAYMENT_SANDBOX_PROBE_ENABLED:-false}
+      TJ_PAYMENT_SANDBOX_PROBE_KEY: ${TJ_PAYMENT_SANDBOX_PROBE_KEY:-}
+    expose:
+      - "8080"
+      - "8081"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_TJ_API_BASE_URL: ""
+        VITE_TJ_DEV_MODE: "false"
+    restart: unless-stopped
+    expose:
+      - "8080"
+
+  gateway:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      TJ_STAGING_HOST: ${TJ_STAGING_HOST:?TJ_STAGING_HOST is required}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      backend:
+        condition: service_healthy
+      alertmanager:
+        condition: service_started
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ../observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    working_dir: /workspace
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        while true; do
+          /bin/sh /workspace/ops/db/backup.sh
+          sleep "$${TJ_BACKUP_INTERVAL_SECONDS:-21600}"
+        done
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: tiempojusto
+      PGUSER: tiempojusto
+      PGPASSWORD: ${TJ_DB_PASSWORD:?TJ_DB_PASSWORD must come from the staging secret store}
+      TJ_BACKUP_DIR: /backups
+      TJ_BACKUP_RETENTION_DAYS: ${TJ_BACKUP_RETENTION_DAYS:-14}
+      TJ_BACKUP_INTERVAL_SECONDS: ${TJ_BACKUP_INTERVAL_SECONDS:-21600}
+    volumes:
+      - ../..:/workspace:ro
+      - backups:/backups
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  backups:
+  caddy_data:
+  caddy_config:
+  prometheus_data:
+  alertmanager_data:
