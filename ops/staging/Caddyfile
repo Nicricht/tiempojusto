@@ -1,0 +1,37 @@
+{$TJ_STAGING_HOST} {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(self), microphone=(self), geolocation=()"
+        -Server
+    }
+
+    handle /healthz {
+        rewrite * /actuator/health/readiness
+        reverse_proxy backend:8081
+    }
+
+    handle /api/* {
+        reverse_proxy backend:8080
+    }
+
+    handle /ws/* {
+        reverse_proxy backend:8080
+    }
+
+    # Internal and Actuator surfaces are intentionally not routed through the public edge.
+    handle /internal/* {
+        respond 404
+    }
+    handle /actuator/* {
+        respond 404
+    }
+
+    handle {
+        reverse_proxy frontend:8080
+    }
+}
