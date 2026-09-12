@@ -1,0 +1,385 @@
+name: MVP Sandbox Golden Path
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'database/**'
+      - '.github/workflows/mvp-sandbox-golden-path.yml'
+      - 'docs/runtime/MVP_SANDBOX_GOLDEN_PATH_V1.md'
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - 'database/**'
+      - '.github/workflows/mvp-sandbox-golden-path.yml'
+      - 'docs/runtime/MVP_SANDBOX_GOLDEN_PATH_V1.md'
+
+jobs:
+  full-mvp-sandbox:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_DB: tiempojusto
+          POSTGRES_USER: tiempojusto
+          POSTGRES_PASSWORD: tiempojusto
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tiempojusto -d tiempojusto"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      PGPASSWORD: tiempojusto
+      TJ_DB_URL: jdbc:postgresql://localhost:5432/tiempojusto
+      TJ_DB_USER: tiempojusto
+      TJ_DB_PASSWORD: tiempojusto
+      TJ_AUTH_DEV_HEADER_ENABLED: 'true'
+      SPRING_PROFILES_ACTIVE: ci
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Apply schema and migrations V1.1 through V1.8
+        run: |
+          set -euo pipefail
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 \
+            -f database/schema/TiempoJusto_PostgreSQL_Schema_V1_0.sql
+          for f in \
+            database/migrations/V1_1__geo_routing_eta.sql \
+            database/migrations/V1_2__webrtc_media.sql \
+            database/migrations/V1_3__oauth2_identity.sql \
+            database/migrations/V1_4__online_reconnect_persistence.sql \
+            database/migrations/V1_5__persistent_session_settlement.sql \
+            database/migrations/V1_6__payment_provider_bindings.sql \
+            database/migrations/V1_7__identity_provider_bindings.sql \
+            database/migrations/V1_8__bid_reservation_replacement.sql; do
+            psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f "$f"
+          done
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from pg_extension where extname in ('postgis','pgcrypto','citext')")" = "3"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from (values ('iam.app_user'),('market.proposal'),('auction.auction'),('auction.reservation_replacement'),('appointment.appointment_session'),('finance.session_settlement'),('finance.payout'),('platform.audit_event'),('platform.outbox_event')) x(name) where to_regclass(name) is not null")" = "9"
+
+      - name: Compile integrated backend
+        run: mvn -B -f backend/pom.xml -DskipTests package
+
+      - name: Start Spring Boot and verify health
+        run: |
+          set -euo pipefail
+          java -jar backend/app/target/tiempojusto-app-1.0.0.jar > /tmp/tiempojusto-mvp.log 2>&1 &
+          echo $! > /tmp/tiempojusto-mvp.pid
+          for i in $(seq 1 40); do
+            if curl -fsS http://localhost:8080/actuator/health > /tmp/health.json; then
+              grep -q '"status":"UP"' /tmp/health.json
+              cat /tmp/health.json
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/tiempojusto-mvp.log
+          exit 1
+
+      - name: Execute complete MVP sandbox golden path
+        run: |
+          set -euo pipefail
+
+          sql_scalar() {
+            psql -h localhost -U tiempojusto -d tiempojusto -Atc "$1"
+          }
+
+          json_field() {
+            python3 -c "import json; print(json.load(open('$1'))$2)"
+          }
+
+          echo '1) Register HOST Camila Test'
+          curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
+            -H 'Content-Type: application/json' \
+            -d '{"role":"HOST","email":"camila.test@tiempojusto.test","username":"camila_test","displayName":"Camila Test","publicAge":28,"supportsOnline":true}' > /tmp/host.json
+          HOST_ID=$(python3 -c 'import json; print(json.load(open("/tmp/host.json"))["userId"])')
+          HOST_PROFILE_ID=$(python3 -c 'import json; print(json.load(open("/tmp/host.json"))["hostProfileId"])')
+
+          echo '2) Verify HOST KYC sandbox'
+          curl -fsS -X POST "http://localhost:8080/api/v1/sandbox/identity/users/$HOST_ID/verify-adult" \
+            -H 'Content-Type: application/json' \
+            -d '{"dateOfBirth":"1998-04-12","legalCountryCode":"CL"}' > /tmp/host-kyc.json
+
+          echo '3) Register BIDDER Nicolás Test'
+          curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
+            -H 'Content-Type: application/json' \
+            -d '{"role":"BIDDER","email":"nicolas.test@tiempojusto.test","username":"nicolas_test","displayName":"Nicolás Test","publicAge":30,"supportsOnline":false}' > /tmp/bidder.json
+          BIDDER_ID=$(python3 -c 'import json; print(json.load(open("/tmp/bidder.json"))["userId"])')
+
+          echo '4) Verify BIDDER KYC sandbox and fund sandbox wallet'
+          curl -fsS -X POST "http://localhost:8080/api/v1/sandbox/identity/users/$BIDDER_ID/verify-adult" \
+            -H 'Content-Type: application/json' \
+            -d '{"dateOfBirth":"1996-02-20","legalCountryCode":"CL"}' > /tmp/bidder-kyc.json
+          curl -fsS -X POST http://localhost:8080/api/v1/sandbox/funding/me \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Content-Type: application/json' \
+            -d '{"amountClp":250000}' > /tmp/funding.json
+          test "$(sql_scalar "select count(*) from iam.identity_verification where user_id in ('$HOST_ID'::uuid,'$BIDDER_ID'::uuid) and status='VERIFIED' and verified_adult=true")" = "2"
+
+          echo '5) Create Proposal'
+          curl -fsS -X POST "http://localhost:8080/api/v1/profiles/$HOST_PROFILE_ID/proposals" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Content-Type: application/json' \
+            -d '{"modality":"ONLINE","durationMinutes":30,"amountClp":60000}' > /tmp/proposal.json
+          PROPOSAL_ID=$(python3 -c 'import json; print(json.load(open("/tmp/proposal.json"))["id"])')
+          test "$(sql_scalar "select count(*) from market.proposal where id='$PROPOSAL_ID'::uuid and status='ACTIVE' and amount_clp=60000 and valid_until >= created_at + interval '7 days'")" = "1"
+
+          echo '6) Open Auction'
+          curl -fsS -X POST http://localhost:8080/api/v1/sandbox/auctions \
+            -H "X-TJ-Actor-Id: $HOST_ID" \
+            -H 'Content-Type: application/json' \
+            -d "{\"hostProfileId\":\"$HOST_PROFILE_ID\",\"durationMinutes\":30,\"openingAmountClp\":45000,\"closeNowAmountClp\":100000}" > /tmp/auction.json
+          AUCTION_ID=$(python3 -c 'import json; print(json.load(open("/tmp/auction.json"))["id"])')
+
+          echo '7) Put Auction inside anti-sniping window'
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 <<SQL
+          with t as (select clock_timestamp() as now_at)
+          update auction.auction a
+             set started_at = t.now_at - interval '14 minutes',
+                 scheduled_end_at = t.now_at + interval '1 minute',
+                 effective_end_at = t.now_at + interval '1 minute'
+            from t where a.id = '$AUCTION_ID'::uuid;
+          SQL
+
+          echo '8) First NORMAL Bid, reserve funds, pozo, sequence and anti-sniping'
+          curl -fsS -X POST "http://localhost:8080/api/v1/auctions/$AUCTION_ID/bids" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Idempotency-Key: mvp-bid-001' \
+            -H 'Content-Type: application/json' \
+            -d '{"amountClp":50000}' > /tmp/bid1.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/bid1.json'))
+          assert d['amountClp']==50000
+          assert d['reservationStrategy']=='NEW'
+          assert d['timerReset'] is True
+          assert d['replayed'] is False
+          assert d['auction']['currentAmountClp']==50000
+          assert d['serverSequence'] >= 1
+          PY
+          RES1=$(python3 -c 'import json; print(json.load(open("/tmp/bid1.json"))["fundsReservationId"])')
+          SEQ1=$(python3 -c 'import json; print(json.load(open("/tmp/bid1.json"))["serverSequence"])')
+          test "$(sql_scalar "select count(*) from auction.bid b join auction.auction a on a.id=b.auction_id where b.auction_id='$AUCTION_ID'::uuid and b.amount_clp=50000 and abs(extract(epoch from (a.effective_end_at-b.created_at))-120) < 1")" = "1"
+
+          echo '9) Second NORMAL Bid adjusts reservation in-place'
+          curl -fsS -X POST "http://localhost:8080/api/v1/auctions/$AUCTION_ID/bids" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Idempotency-Key: mvp-bid-002' \
+            -H 'Content-Type: application/json' \
+            -d '{"amountClp":55000}' > /tmp/bid2.json
+          RES2=$(python3 -c 'import json; print(json.load(open("/tmp/bid2.json"))["fundsReservationId"])')
+          SEQ2=$(python3 -c 'import json; print(json.load(open("/tmp/bid2.json"))["serverSequence"])')
+          test "$RES1" = "$RES2"
+          test "$SEQ2" -gt "$SEQ1"
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/bid2.json'))
+          assert d['amountClp']==55000
+          assert d['reservationStrategy']=='ADJUSTED'
+          assert d['auction']['currentAmountClp']==55000
+          PY
+          test "$(sql_scalar "select count(*) from auction.funds_reservation where id='$RES2'::uuid and status='RESERVED' and amount_clp=55000")" = "1"
+          test "$(sql_scalar "select count(*) from auction.bid where auction_id='$AUCTION_ID'::uuid and bid_type='NORMAL' and status='VALID'")" = "2"
+          test "$(sql_scalar "select count(*) from platform.outbox_event where aggregate_id='$AUCTION_ID'::uuid and event_type='BID_ACCEPTED'")" = "2"
+          test "$(sql_scalar "select count(*) from platform.outbox_event where aggregate_id='$AUCTION_ID'::uuid and event_type='POZO_UPDATED'")" = "2"
+          test "$(sql_scalar "select count(*) from platform.outbox_event where aggregate_id='$AUCTION_ID'::uuid and event_type='TIMER_RESET_2M'")" -ge "1"
+
+          echo '10) Close Now, verify winner and 3-minute confirmation window'
+          curl -fsS -X POST "http://localhost:8080/api/v1/auctions/$AUCTION_ID/close-now" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Idempotency-Key: mvp-close-now-001' > /tmp/close-now.json
+          APPOINTMENT_ID=$(python3 -c 'import json; print(json.load(open("/tmp/close-now.json"))["appointmentId"])')
+          WINNING_BID_ID=$(python3 -c 'import json; print(json.load(open("/tmp/close-now.json"))["bidId"])')
+          test "$(sql_scalar "select count(*) from auction.auction where id='$AUCTION_ID'::uuid and status='CLOSED' and winner_user_id='$BIDDER_ID'::uuid and winning_bid_id='$WINNING_BID_ID'::uuid and current_amount_clp=100000")" = "1"
+          test "$(sql_scalar "select count(*) from auction.auction_participant where auction_id='$AUCTION_ID'::uuid and bidder_user_id='$BIDDER_ID'::uuid and confirmation_status='PENDING' and confirmation_deadline between clock_timestamp()+interval '175 seconds' and clock_timestamp()+interval '181 seconds'")" = "1"
+
+          echo '11) Confirm Winner and create Online session'
+          curl -fsS -X POST "http://localhost:8080/api/v1/appointments/$APPOINTMENT_ID/confirm-now" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" > /tmp/confirm.json
+          SESSION_ID=$(python3 -c 'import json; print(json.load(open("/tmp/confirm.json"))["sessionId"])')
+          ROOM_ID=$(python3 -c 'import json; print(json.load(open("/tmp/confirm.json"))["videoRoomId"])')
+
+          echo '12) HOST and BIDDER join with valid camera/media'
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/online/join" \
+            -H "X-TJ-Actor-Id: $HOST_ID" \
+            -H 'Content-Type: application/json' \
+            -d '{"cameraValid":true,"mediaFlowing":true,"audioMuted":false}' > /tmp/host-join.json
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/online/join" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Content-Type: application/json' \
+            -d '{"cameraValid":true,"mediaFlowing":true,"audioMuted":false}' > /tmp/bidder-join.json
+          test "$(sql_scalar "select count(*) from media.video_participant_state where video_room_id='$ROOM_ID'::uuid and camera_valid=true and media_flowing=true")" = "2"
+          test "$(sql_scalar "select count(*) from appointment.appointment_session where id='$SESSION_ID'::uuid and status='FREE_ONLINE'")" = "1"
+
+          echo '13) Fast-forward FREE_ONLINE to exactly 2 minutes'
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 <<SQL
+          with t as (select clock_timestamp() as now_at)
+          update appointment.appointment_session s
+             set free_started_at=t.now_at-interval '2 minutes', free_ends_at=t.now_at
+            from t where s.id='$SESSION_ID'::uuid;
+          update media.video_room vr
+             set free_online_end=s.free_ends_at
+            from appointment.appointment_session s
+           where s.id='$SESSION_ID'::uuid and vr.id='$ROOM_ID'::uuid;
+          SQL
+          test "$(sql_scalar "select count(*) from appointment.appointment_session where id='$SESSION_ID'::uuid and extract(epoch from (free_ends_at-free_started_at))=120")" = "1"
+
+          echo '14) Bilateral paid consent'
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/paid-consent" \
+            -H "X-TJ-Actor-Id: $HOST_ID" > /tmp/host-consent.json
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/paid-consent" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" > /tmp/bidder-consent.json
+          grep -q '"status":"PAID_ACTIVE"' /tmp/bidder-consent.json
+
+          echo '15) Microcut <=5 seconds must not pause billing'
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 <<SQL
+          update appointment.session_segment
+             set started_at=clock_timestamp()-interval '20 seconds'
+           where session_id='$SESSION_ID'::uuid and segment_type='PAID' and ended_at is null;
+          with t as (select clock_timestamp()-interval '4 seconds' as at)
+          update media.video_participant_state m
+             set camera_valid=true, media_flowing=true, last_valid_media_at=t.at,
+                 last_heartbeat_at=t.at, updated_at=clock_timestamp()
+            from t where m.video_room_id='$ROOM_ID'::uuid;
+          SQL
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/online/media-signal" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Content-Type: application/json' \
+            -d '{"cameraValid":false,"mediaFlowing":false,"audioMuted":false}' > /tmp/microcut.json
+          grep -q '"sessionStatus":"PAID_ACTIVE"' /tmp/microcut.json
+          test "$(sql_scalar "select count(*) from appointment.session_segment where session_id='$SESSION_ID'::uuid and segment_type='PAID' and ended_at is null")" = "1"
+
+          echo '16) Cut >5 seconds enters RECONNECTING and pauses retroactively'
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 <<SQL
+          with t as (select clock_timestamp()-interval '6 seconds' as at)
+          update media.video_participant_state m
+             set camera_valid=true, media_flowing=true, last_valid_media_at=t.at,
+                 last_heartbeat_at=t.at, updated_at=clock_timestamp()
+            from t where m.video_room_id='$ROOM_ID'::uuid;
+          SQL
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/online/media-signal" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Content-Type: application/json' \
+            -d '{"cameraValid":false,"mediaFlowing":false,"audioMuted":false}' > /tmp/interruption.json
+          grep -q '"sessionStatus":"RECONNECTING"' /tmp/interruption.json
+          test "$(sql_scalar "select count(*) from appointment.session_segment where session_id='$SESSION_ID'::uuid and segment_type='RECONNECT' and billable=false and ended_at is null")" = "1"
+          test "$(sql_scalar "select count(*) from appointment.session_segment s where s.session_id='$SESSION_ID'::uuid and s.segment_type='PAID' and s.ended_at is not null and abs(extract(epoch from (s.ended_at-(select min(last_valid_media_at) from media.video_participant_state where video_room_id='$ROOM_ID'::uuid)))) < 0.01")" = "1"
+
+          echo '17) Recover media without automatic billing resume'
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/online/media-signal" \
+            -H "X-TJ-Actor-Id: $HOST_ID" \
+            -H 'Content-Type: application/json' \
+            -d '{"cameraValid":true,"mediaFlowing":true,"audioMuted":true}' > /tmp/recover-host.json
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/online/media-signal" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Content-Type: application/json' \
+            -d '{"cameraValid":true,"mediaFlowing":true,"audioMuted":false}' > /tmp/recover-bidder.json
+          grep -q '"sessionStatus":"RECONNECTING"' /tmp/recover-bidder.json
+          test "$(sql_scalar "select count(*) from appointment.session_segment where session_id='$SESSION_ID'::uuid and segment_type='PAID' and ended_at is null")" = "0"
+
+          echo '18) Bilateral resume returns to PAID_ACTIVE'
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/online/resume-consent" \
+            -H "X-TJ-Actor-Id: $HOST_ID" > /tmp/resume-host.json
+          grep -q '"sessionStatus":"RECONNECTING"' /tmp/resume-host.json
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/online/resume-consent" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" > /tmp/resume-bidder.json
+          grep -q '"sessionStatus":"PAID_ACTIVE"' /tmp/resume-bidder.json
+          test "$(sql_scalar "select count(*) from appointment.session_segment where session_id='$SESSION_ID'::uuid and segment_type='RECONNECT' and billable=false and ended_at is not null")" = "1"
+
+          echo '19) Fast-forward billable PAID time to a full 30-minute settlement'
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 <<SQL
+          update appointment.session_segment
+             set started_at=ended_at-interval '30 minutes', billable_seconds=1800
+           where id=(select id from appointment.session_segment where session_id='$SESSION_ID'::uuid and segment_type='PAID' and ended_at is not null order by id limit 1);
+          update appointment.session_segment
+             set started_at=clock_timestamp()
+           where session_id='$SESSION_ID'::uuid and segment_type='PAID' and ended_at is null;
+          SQL
+
+          echo '20) Finish session unilaterally and verify billableSeconds'
+          curl -fsS -X POST "http://localhost:8080/api/v1/sessions/$SESSION_ID/finish" \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" > /tmp/finish.json
+          cat /tmp/finish.json
+          grep -q '"billableSeconds":1800' /tmp/finish.json
+          grep -q '"settlementState":"READY_FOR_SETTLEMENT"' /tmp/finish.json
+
+          echo '21) Wait for scheduled persistent settlement'
+          for i in $(seq 1 15); do
+            STATUS=$(sql_scalar "select coalesce((select status from finance.session_settlement where session_id='$SESSION_ID'::uuid),'NONE')")
+            if [ "$STATUS" = "POSTED" ]; then break; fi
+            sleep 1
+          done
+          test "$(sql_scalar "select count(*) from finance.session_settlement where session_id='$SESSION_ID'::uuid and status='POSTED' and billable_seconds=1800 and generated_amount_clp=100000 and host_net_clp=80000 and platform_fee_clp=20000")" = "1"
+          PAYOUT_ID=$(sql_scalar "select p.id from finance.payout p join finance.session_settlement fs on fs.ledger_transaction_id=p.source_transaction_id where fs.session_id='$SESSION_ID'::uuid")
+          test -n "$PAYOUT_ID"
+          test "$(sql_scalar "select count(*) from finance.payout where id='$PAYOUT_ID'::uuid and status='PENDING_HOLD' and net_amount_clp=80000")" = "1"
+          test "$(sql_scalar "select count(*) from finance.payout p join finance.session_settlement fs on fs.ledger_transaction_id=p.source_transaction_id where p.id='$PAYOUT_ID'::uuid and abs(extract(epoch from (p.pending_until-fs.settled_at))-3600) < 0.01")" = "1"
+
+          echo '22) Verify double-entry ledger before releasing the hold'
+          test "$(sql_scalar "select count(*) from finance.ledger_transaction t where t.status='POSTED' and not exists (select 1 from (select transaction_id, coalesce(sum(amount_clp) filter(where direction='DEBIT'),0) d, coalesce(sum(amount_clp) filter(where direction='CREDIT'),0) c from finance.ledger_entry group by transaction_id) x where x.transaction_id=t.id and x.d=x.c and x.d>0)")" = "0"
+
+          echo '23) Fast-forward the exact 60-minute payout hold and wait for AVAILABLE'
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 \
+            -c "update finance.payout set pending_until=clock_timestamp()-interval '1 second' where id='$PAYOUT_ID'::uuid and status='PENDING_HOLD';"
+          for i in $(seq 1 15); do
+            PAYOUT_STATUS=$(sql_scalar "select status from finance.payout where id='$PAYOUT_ID'::uuid")
+            if [ "$PAYOUT_STATUS" = "AVAILABLE" ]; then break; fi
+            sleep 1
+          done
+          test "$(sql_scalar "select count(*) from finance.payout where id='$PAYOUT_ID'::uuid and status='AVAILABLE' and net_amount_clp=80000 and available_at is not null")" = "1"
+
+          echo '24) Verify outbox, audit trail, final state invariants and no impossible state'
+          test "$(sql_scalar "select count(*) from platform.outbox_event where aggregate_id in ('$PROPOSAL_ID'::uuid,'$AUCTION_ID'::uuid,'$APPOINTMENT_ID'::uuid,'$SESSION_ID'::uuid,'$PAYOUT_ID'::uuid)")" -ge "12"
+          test "$(sql_scalar "select count(*) from platform.audit_event where entity_id in ('$PROPOSAL_ID'::uuid,'$AUCTION_ID'::uuid,'$SESSION_ID'::uuid,'$PAYOUT_ID'::uuid)")" -ge "8"
+          test "$(sql_scalar "select count(*) from appointment.appointment_session s join media.video_room vr on vr.appointment_id=s.appointment_id where s.id='$SESSION_ID'::uuid and s.status='ENDED' and vr.status='ENDED' and s.billable_seconds=1800 and vr.persistent_recording_enabled=false")" = "1"
+          test "$(sql_scalar "select count(*) from appointment.session_segment where session_id='$SESSION_ID'::uuid and ended_at is null")" = "0"
+          test "$(sql_scalar "select count(*) from appointment.appointment_session s join media.video_room vr on vr.appointment_id=s.appointment_id where (s.status='ENDED' and vr.status='PAID_ACTIVE') or (s.status='PAID_ACTIVE' and vr.status='ENDED')")" = "0"
+          test "$(sql_scalar "select count(*) from finance.ledger_transaction t where t.status='POSTED' and not exists (select 1 from (select transaction_id, coalesce(sum(amount_clp) filter(where direction='DEBIT'),0) d, coalesce(sum(amount_clp) filter(where direction='CREDIT'),0) c from finance.ledger_entry group by transaction_id) x where x.transaction_id=t.id and x.d=x.c and x.d>0)")" = "0"
+
+          printf '%s\n' \
+            'MVP_SANDBOX_GOLDEN_PATH=PASS' \
+            "HOST_ID=$HOST_ID" \
+            "BIDDER_ID=$BIDDER_ID" \
+            "PROPOSAL_ID=$PROPOSAL_ID" \
+            "AUCTION_ID=$AUCTION_ID" \
+            "APPOINTMENT_ID=$APPOINTMENT_ID" \
+            "SESSION_ID=$SESSION_ID" \
+            "PAYOUT_ID=$PAYOUT_ID" \
+            'BILLABLE_SECONDS=1800' \
+            'GENERATED_CLP=100000' \
+            'HOST_CLP=80000' \
+            'PLATFORM_CLP=20000' \
+            'PAYOUT_STATUS=AVAILABLE'
+
+      - name: Print diagnostics on failure
+        if: failure()
+        run: |
+          echo '=== health ==='
+          cat /tmp/health.json || true
+          echo '=== responses ==='
+          for f in /tmp/host.json /tmp/host-kyc.json /tmp/bidder.json /tmp/bidder-kyc.json /tmp/funding.json /tmp/proposal.json /tmp/auction.json /tmp/bid1.json /tmp/bid2.json /tmp/close-now.json /tmp/confirm.json /tmp/host-join.json /tmp/bidder-join.json /tmp/host-consent.json /tmp/bidder-consent.json /tmp/microcut.json /tmp/interruption.json /tmp/recover-host.json /tmp/recover-bidder.json /tmp/resume-host.json /tmp/resume-bidder.json /tmp/finish.json; do
+            echo "--- $f"; cat "$f" 2>/dev/null || true; echo
+          done
+          echo '=== session segments ==='
+          psql -h localhost -U tiempojusto -d tiempojusto -c 'select * from appointment.session_segment order by id' || true
+          echo '=== settlements ==='
+          psql -h localhost -U tiempojusto -d tiempojusto -c 'select * from finance.session_settlement' || true
+          echo '=== payouts ==='
+          psql -h localhost -U tiempojusto -d tiempojusto -c 'select * from finance.payout' || true
+          echo '=== app log ==='
+          cat /tmp/tiempojusto-mvp.log || true
