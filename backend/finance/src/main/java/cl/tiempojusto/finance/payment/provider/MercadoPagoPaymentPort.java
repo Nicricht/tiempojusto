@@ -128,9 +128,6 @@ public final class MercadoPagoPaymentPort implements PaymentPort {
         if (current.status() == ReservationStatus.RELEASED) {
             throw error("PAYMENT_RESERVATION_RELEASED", "Reservation is released");
         }
-        if (amountClp > current.remainingReservedClp()) {
-            throw error("PAYMENT_CAPTURE_EXCEEDS_RESERVATION", "Capture exceeds provider authorization");
-        }
 
         StoredCapture prior = repository.captureByReservationId(reservationId).orElse(null);
         if (prior != null) {
@@ -138,6 +135,10 @@ public final class MercadoPagoPaymentPort implements PaymentPort {
                 throw error("PAYMENT_MULTIPLE_CAPTURE_UNSUPPORTED", "Mercado Pago candidate uses one final capture per authorization");
             }
             return toCapture(prior);
+        }
+
+        if (amountClp > current.remainingReservedClp()) {
+            throw error("PAYMENT_CAPTURE_EXCEEDS_RESERVATION", "Capture exceeds provider authorization");
         }
 
         MercadoPagoTransport.CaptureResult result =
@@ -154,9 +155,6 @@ public final class MercadoPagoPaymentPort implements PaymentPort {
         );
         repository.saveCapture(capture);
 
-        // Mercado Pago candidate is modeled as a single final capture. If the
-        // capture is below the authorization, the unused authorization is not
-        // kept available for a second capture by TiempoJusto.
         repository.saveReservation(new StoredReservation(
                 current.internalId(), current.payerUserId(), current.providerCode(), current.providerPaymentId(),
                 current.authorizedAmountClp(), 0L, ReservationStatus.CAPTURED, current.createdAt()
