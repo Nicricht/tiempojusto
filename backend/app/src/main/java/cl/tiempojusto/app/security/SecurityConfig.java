@@ -26,6 +26,7 @@ public class SecurityConfig {
                             .requestMatchers("/api/v1/auth/refresh").permitAll()
                             .requestMatchers("/api/v1/sandbox/identity/**").permitAll()
                             .requestMatchers("/api/v1/webhooks/kyc/**").permitAll()
+                            .requestMatchers("/api/v1/webhooks/payments/mercado-pago").permitAll()
                             .requestMatchers("/api/v1/**").authenticated()
                             .anyRequest().permitAll())
                     .oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));
