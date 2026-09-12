@@ -9,6 +9,7 @@ import cl.tiempojusto.geo.GeoEligibilityService;
 import cl.tiempojusto.geo.MockRoutingPort;
 import cl.tiempojusto.geo.RoutingPort;
 import cl.tiempojusto.media.MockWebRtcPort;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
@@ -23,6 +24,7 @@ public class CoreModulesConfiguration {
 
     @Bean
     @Profile({"default", "dev", "test", "ci"})
+    @ConditionalOnProperty(name = "tiempojusto.payment.provider", havingValue = "MOCK", matchIfMissing = true)
     public MockPaymentPort mockPaymentPort() {
         return new MockPaymentPort();
     }
