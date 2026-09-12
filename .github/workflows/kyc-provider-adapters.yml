@@ -43,7 +43,7 @@ jobs:
       TJ_AUTH_DEV_HEADER_ENABLED: 'true'
       TJ_KYC_PROVIDER: veriff
       TJ_KYC_CALLBACK_URL: https://app.example/kyc/return
-      TJ_KYC_VERIFF_BASE_URL: http://localhost:18080
+      TJ_KYC_VERIFF_BASE_URL: http://127.0.0.1:18080
       TJ_KYC_VERIFF_API_KEY: test-api-key
       TJ_KYC_VERIFF_SHARED_SECRET: test-shared-secret
       SPRING_PROFILES_ACTIVE: ci
@@ -94,7 +94,7 @@ jobs:
 
           class Handler(BaseHTTPRequestHandler):
               def log_message(self, fmt, *args):
-                  pass
+                  print(fmt % args, flush=True)
 
               def send_json(self, status, obj):
                   raw = json.dumps(obj, separators=(',', ':')).encode()
@@ -170,9 +170,10 @@ jobs:
           USER_ID=$(python3 -c 'import json; print(json.load(open("/tmp/user.json"))["userId"])')
           HOST_PROFILE_ID=$(python3 -c 'import json; print(json.load(open("/tmp/user.json"))["hostProfileId"])')
 
-          curl -fsS -X POST http://localhost:8080/api/v1/identity/verifications \
-            -H "X-TJ-Actor-Id: $USER_ID" > /tmp/kyc-start.json
+          START_CODE=$(curl -sS -o /tmp/kyc-start.json -w '%{http_code}' -X POST http://localhost:8080/api/v1/identity/verifications \
+            -H "X-TJ-Actor-Id: $USER_ID")
           cat /tmp/kyc-start.json
+          test "$START_CODE" = "200"
           grep -q '"provider":"VERIFF"' /tmp/kyc-start.json
           grep -q '"status":"PENDING"' /tmp/kyc-start.json
           grep -q 'https://verify.example/session/' /tmp/kyc-start.json
@@ -221,5 +222,6 @@ jobs:
       - name: Print logs on failure
         if: failure()
         run: |
+          cat /tmp/kyc-start.json || true
           cat /tmp/tiempojusto-kyc.log || true
           cat /tmp/veriff-stub.log || true
