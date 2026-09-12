@@ -141,6 +141,20 @@ export type BalanceView = {
   paidOutClp: number;
 };
 
+export type AdminRow = Record<string, unknown>;
+
+export type AdminAuctionBundle = {
+  auction: AdminRow;
+  bids: AdminRow[];
+};
+
+export type AdminSessionBundle = {
+  session: AdminRow;
+  segments: AdminRow[];
+  participants: AdminRow[];
+  incidents: AdminRow[];
+};
+
 export type ApiProblem = {
   code?: string;
   message?: string;

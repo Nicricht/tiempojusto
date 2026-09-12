@@ -19,6 +19,175 @@ public class AdminReviewApplicationService {
         this.jdbc = jdbc;
     }
 
+    public List<Map<String, Object>> users(UUID adminId, String query) {
+        requireAdmin(adminId);
+        String normalized = query == null ? "" : query.trim();
+        String wildcard = "%" + normalized + "%";
+        return jdbc.queryForList("""
+                select u.id,
+                       u.public_id,
+                       u.role::text as role,
+                       u.account_status::text as account_status,
+                       p.username::text as username,
+                       p.display_name,
+                       p.public_age,
+                       u.created_at,
+                       k.provider_code as kyc_provider,
+                       k.status::text as kyc_status,
+                       k.verified_adult,
+                       k.legal_country_code,
+                       k.verified_at,
+                       k.expires_at
+                  from iam.app_user u
+                  left join iam.public_identity p on p.user_id = u.id
+                  left join lateral (
+                      select v.provider_code,
+                             v.status,
+                             v.verified_adult,
+                             v.legal_country_code,
+                             v.verified_at,
+                             v.expires_at
+                        from iam.identity_verification v
+                       where v.user_id = u.id
+                       order by v.created_at desc
+                       limit 1
+                  ) k on true
+                 where (? = ''
+                    or u.id::text = ?
+                    or u.public_id ilike ?
+                    or coalesce(p.username::text, '') ilike ?
+                    or coalesce(p.display_name, '') ilike ?
+                    or coalesce(u.email::text, '') ilike ?)
+                 order by u.created_at desc
+                 limit 100
+                """, normalized, normalized, wildcard, wildcard, wildcard, wildcard);
+    }
+
+    public Map<String, Object> auctionAudit(UUID adminId, UUID auctionId) {
+        requireAdmin(adminId);
+        List<Map<String, Object>> auctions = jdbc.queryForList("""
+                select a.id,
+                       a.host_user_id,
+                       a.modality::text as modality,
+                       a.duration_minutes,
+                       a.opening_amount_clp,
+                       a.current_amount_clp,
+                       a.next_actionable_amount_clp,
+                       a.instant_close_amount_clp,
+                       a.status::text as status,
+                       a.started_at,
+                       a.scheduled_end_at,
+                       a.effective_end_at,
+                       a.winner_user_id,
+                       a.winning_bid_id,
+                       a.close_reason,
+                       a.lock_version
+                  from auction.auction a
+                 where a.id = ?
+                """, auctionId);
+        if (auctions.isEmpty()) throw ApiProblem.notFound("AUCTION_NOT_FOUND", "Auction no existe.");
+        List<Map<String, Object>> bids = jdbc.queryForList("""
+                select b.id,
+                       b.bidder_user_id,
+                       b.amount_clp,
+                       b.bid_type::text as bid_type,
+                       b.status::text as status,
+                       b.funds_reservation_id,
+                       b.server_sequence,
+                       b.created_at
+                  from auction.bid b
+                 where b.auction_id = ?
+                 order by b.server_sequence asc
+                """, auctionId);
+        return Map.of("auction", auctions.getFirst(), "bids", bids);
+    }
+
+    public Map<String, Object> sessionAudit(UUID adminId, UUID sessionId) {
+        requireAdmin(adminId);
+        List<Map<String, Object>> sessions = jdbc.queryForList("""
+                select s.id,
+                       s.appointment_id,
+                       a.auction_id,
+                       a.host_user_id,
+                       a.bidder_user_id,
+                       a.modality::text as modality,
+                       a.duration_minutes,
+                       a.agreed_amount_clp,
+                       a.status::text as appointment_status,
+                       a.winner_confirmed_at,
+                       s.status::text as session_status,
+                       s.free_started_at,
+                       s.free_ends_at,
+                       s.paid_started_at,
+                       s.ended_at,
+                       s.billable_seconds,
+                       vr.id as video_room_id,
+                       vr.status::text as video_status,
+                       vr.join_deadline,
+                       vr.free_online_end,
+                       vr.paid_acceptance_deadline,
+                       vr.media_lost_at,
+                       vr.reconnect_deadline,
+                       vr.persistent_recording_enabled
+                  from appointment.appointment_session s
+                  join appointment.appointment a on a.id = s.appointment_id
+                  left join media.video_room vr on vr.appointment_id = a.id
+                 where s.id = ?
+                """, sessionId);
+        if (sessions.isEmpty()) throw ApiProblem.notFound("SESSION_NOT_FOUND", "Session no existe.");
+
+        List<Map<String, Object>> segments = jdbc.queryForList("""
+                select id,
+                       segment_type::text as segment_type,
+                       started_at,
+                       ended_at,
+                       billable,
+                       billable_seconds
+                  from appointment.session_segment
+                 where session_id = ?
+                 order by started_at asc, id asc
+                """, sessionId);
+
+        List<Map<String, Object>> participants = jdbc.queryForList("""
+                select ps.user_id,
+                       ps.participant_role,
+                       ps.joined_at,
+                       ps.left_at,
+                       ps.camera_valid,
+                       ps.media_flowing,
+                       ps.audio_muted,
+                       ps.last_heartbeat_at,
+                       ps.last_valid_media_at,
+                       ps.updated_at
+                  from media.video_participant_state ps
+                  join media.video_room vr on vr.id = ps.video_room_id
+                  join appointment.appointment_session s on s.appointment_id = vr.appointment_id
+                 where s.id = ?
+                 order by ps.participant_role
+                """, sessionId);
+
+        List<Map<String, Object>> incidents = jdbc.queryForList("""
+                select mi.id,
+                       mi.incident_type,
+                       mi.detected_at,
+                       mi.last_valid_media_at,
+                       mi.recovered_at,
+                       mi.provider_attributable
+                  from media.media_incident mi
+                  join media.video_room vr on vr.id = mi.video_room_id
+                  join appointment.appointment_session s on s.appointment_id = vr.appointment_id
+                 where s.id = ?
+                 order by mi.detected_at asc, mi.id asc
+                """, sessionId);
+
+        return Map.of(
+                "session", sessions.getFirst(),
+                "segments", segments,
+                "participants", participants,
+                "incidents", incidents
+        );
+    }
+
     public List<Map<String, Object>> queue(UUID adminId) {
         requireAdmin(adminId);
         return jdbc.queryForList("""
@@ -219,14 +388,17 @@ public class AdminReviewApplicationService {
         List<Map<String, Object>> rows = jdbc.queryForList("""
                 select p.id,
                        p.host_user_id,
-                       p.amount_clp,
+                       p.gross_amount_clp,
+                       p.platform_fee_clp,
+                       p.net_amount_clp,
                        p.status::text as status,
                        p.pending_until,
+                       p.available_at,
                        p.source_transaction_id,
+                       p.availability_transaction_id,
                        p.provider_reference,
                        p.created_at,
-                       p.updated_at,
-                       exists(select 1 from finance.payout_hold h where h.payout_id = p.id and h.released_at is null) as held_for_review
+                       exists(select 1 from finance.payout_hold h where h.payout_id = p.id and h.status = 'ACTIVE') as held_for_review
                   from finance.payout p
                  where p.id = ?
                 """, payoutId);
@@ -234,12 +406,81 @@ public class AdminReviewApplicationService {
         return rows.getFirst();
     }
 
+    public List<Map<String, Object>> payoutHolds(UUID adminId, UUID payoutId) {
+        payoutAudit(adminId, payoutId);
+        return jdbc.queryForList("""
+                select id,
+                       payout_id,
+                       safety_case_id,
+                       reason_code,
+                       evidence_ref,
+                       status,
+                       created_at,
+                       released_at
+                  from finance.payout_hold
+                 where payout_id = ?
+                 order by created_at desc
+                """, payoutId);
+    }
+
+    @Transactional
+    public Map<String, Object> createPayoutHold(UUID adminId, UUID payoutId, PayoutHoldRequest request) {
+        requireAdmin(adminId);
+        if (request == null || request.reasonCode() == null || request.reasonCode().isBlank()
+                || request.evidenceRef() == null || request.evidenceRef().isBlank()) {
+            throw ApiProblem.badRequest("PAYOUT_HOLD_INVALID", "reasonCode y evidenceRef son obligatorios.");
+        }
+        Map<String, Object> payout = payoutAudit(adminId, payoutId);
+        if (!"PENDING_HOLD".equals(payout.get("status"))) {
+            throw ApiProblem.conflict("PAYOUT_HOLD_STATUS_INVALID", "Solo se puede crear un hold objetivo mientras el payout está PENDING_HOLD.");
+        }
+        if (request.safetyCaseId() != null) ensureCase(request.safetyCaseId());
+
+        String reasonCode = request.reasonCode().trim().toUpperCase();
+        String evidenceRef = request.evidenceRef().trim();
+        Map<String, Object> hold = jdbc.queryForMap("""
+                insert into finance.payout_hold(payout_id, safety_case_id, reason_code, evidence_ref)
+                values (?, ?, ?, ?)
+                returning id, payout_id, safety_case_id, reason_code, evidence_ref, status, created_at, released_at
+                """, payoutId, request.safetyCaseId(), reasonCode, evidenceRef);
+        writeAdminAction(adminId, "CREATE_PAYOUT_HOLD", "PAYOUT", payoutId,
+                "Objective hold " + reasonCode + " evidence=" + evidenceRef);
+        writeAudit(adminId, "PAYOUT_HOLD_CREATED", "PAYOUT", payoutId);
+        return hold;
+    }
+
+    @Transactional
+    public Map<String, Object> releasePayoutHold(UUID adminId, UUID payoutId, UUID holdId, PayoutHoldReleaseRequest request) {
+        requireAdmin(adminId);
+        if (request == null || request.reason() == null || request.reason().isBlank()) {
+            throw ApiProblem.badRequest("PAYOUT_HOLD_RELEASE_INVALID", "reason es obligatorio.");
+        }
+        int updated = jdbc.update("""
+                update finance.payout_hold
+                   set status = 'RELEASED', released_at = now()
+                 where id = ? and payout_id = ? and status = 'ACTIVE'
+                """, holdId, payoutId);
+        if (updated != 1) {
+            throw ApiProblem.conflict("PAYOUT_HOLD_NOT_RELEASABLE", "El hold no existe, no pertenece al payout o ya fue liberado.");
+        }
+        writeAdminAction(adminId, "RELEASE_PAYOUT_HOLD", "PAYOUT", payoutId, request.reason().trim());
+        writeAudit(adminId, "PAYOUT_HOLD_RELEASED", "PAYOUT", payoutId);
+        return jdbc.queryForMap("""
+                select id, payout_id, safety_case_id, reason_code, evidence_ref, status, created_at, released_at
+                  from finance.payout_hold
+                 where id = ?
+                """, holdId);
+    }
+
     public List<Map<String, Object>> ledgerAudit(UUID adminId, UUID transactionId) {
         requireAdmin(adminId);
         return jdbc.queryForList("""
                 select t.id as transaction_id,
-                       t.tx_type::text as tx_type,
+                       t.transaction_type::text as tx_type,
                        t.status::text as transaction_status,
+                       t.reference_type,
+                       t.reference_id,
+                       t.created_at,
                        t.posted_at,
                        e.id as entry_id,
                        e.account_id,
@@ -266,6 +507,24 @@ public class AdminReviewApplicationService {
                  where entity_type = 'SAFETY_CASE' and entity_id = ?
                  order by created_at desc
                 """, caseId);
+    }
+
+    public List<Map<String, Object>> adminActions(UUID adminId, UUID targetId) {
+        requireAdmin(adminId);
+        if (targetId == null) {
+            return jdbc.queryForList("""
+                    select id, admin_user_id, action_type, target_type, target_id, reason, created_at
+                      from platform.admin_action
+                     order by created_at desc
+                     limit 200
+                    """);
+        }
+        return jdbc.queryForList("""
+                select id, admin_user_id, action_type, target_type, target_id, reason, created_at
+                  from platform.admin_action
+                 where target_id = ?
+                 order by created_at desc
+                """, targetId);
     }
 
     private Map<String, Object> task(UUID taskId) {
@@ -314,4 +573,6 @@ public class AdminReviewApplicationService {
 
     public record DecisionRequest(String outcome, String finalSeverity, String reason) {}
     public record AppealResolutionRequest(String outcome, String reason) {}
+    public record PayoutHoldRequest(String reasonCode, String evidenceRef, UUID safetyCaseId) {}
+    public record PayoutHoldReleaseRequest(String reason) {}
 }

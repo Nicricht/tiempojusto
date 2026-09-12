@@ -21,6 +21,22 @@ public class AdminReviewController {
         this.actorContext = actorContext;
     }
 
+    @GetMapping("/users")
+    public List<Map<String, Object>> users(@RequestParam(defaultValue = "") String query,
+                                            HttpServletRequest request) {
+        return admin.users(actorContext.requireActor(request), query);
+    }
+
+    @GetMapping("/auctions/{auctionId}")
+    public Map<String, Object> auction(@PathVariable UUID auctionId, HttpServletRequest request) {
+        return admin.auctionAudit(actorContext.requireActor(request), auctionId);
+    }
+
+    @GetMapping("/sessions/{sessionId}")
+    public Map<String, Object> session(@PathVariable UUID sessionId, HttpServletRequest request) {
+        return admin.sessionAudit(actorContext.requireActor(request), sessionId);
+    }
+
     @GetMapping("/human-review-queue")
     public List<Map<String, Object>> queue(HttpServletRequest request) {
         return admin.queue(actorContext.requireActor(request));
@@ -71,6 +87,26 @@ public class AdminReviewController {
         return admin.payoutAudit(actorContext.requireActor(request), payoutId);
     }
 
+    @GetMapping("/finance/payouts/{payoutId}/holds")
+    public List<Map<String, Object>> payoutHolds(@PathVariable UUID payoutId, HttpServletRequest request) {
+        return admin.payoutHolds(actorContext.requireActor(request), payoutId);
+    }
+
+    @PostMapping("/finance/payouts/{payoutId}/holds")
+    public Map<String, Object> createPayoutHold(@PathVariable UUID payoutId,
+                                                @RequestBody AdminReviewApplicationService.PayoutHoldRequest body,
+                                                HttpServletRequest request) {
+        return admin.createPayoutHold(actorContext.requireActor(request), payoutId, body);
+    }
+
+    @PostMapping("/finance/payouts/{payoutId}/holds/{holdId}/release")
+    public Map<String, Object> releasePayoutHold(@PathVariable UUID payoutId,
+                                                 @PathVariable UUID holdId,
+                                                 @RequestBody AdminReviewApplicationService.PayoutHoldReleaseRequest body,
+                                                 HttpServletRequest request) {
+        return admin.releasePayoutHold(actorContext.requireActor(request), payoutId, holdId, body);
+    }
+
     @GetMapping("/finance/ledger/{transactionId}")
     public List<Map<String, Object>> ledgerAudit(@PathVariable UUID transactionId, HttpServletRequest request) {
         return admin.ledgerAudit(actorContext.requireActor(request), transactionId);
@@ -82,11 +118,17 @@ public class AdminReviewController {
         return admin.auditLog(actorContext.requireActor(request), caseId);
     }
 
+    @GetMapping("/admin-actions")
+    public List<Map<String, Object>> adminActions(@RequestParam(required = false) UUID targetId,
+                                                   HttpServletRequest request) {
+        return admin.adminActions(actorContext.requireActor(request), targetId);
+    }
+
     @RequestMapping(value = "/finance/**", method = {RequestMethod.POST, RequestMethod.PUT, RequestMethod.PATCH, RequestMethod.DELETE})
     public ResponseEntity<Map<String, String>> rejectFinanceMutation() {
         return ResponseEntity.status(405).body(Map.of(
                 "code", "ADMIN_FINANCE_READ_ONLY",
-                "message", "Las herramientas financieras de Admin son solo lectura."
+                "message", "Las herramientas financieras de Admin son solo lectura salvo el flujo auditado de payout holds."
         ));
     }
 }

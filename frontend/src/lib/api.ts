@@ -1,4 +1,7 @@
 import type {
+  AdminAuctionBundle,
+  AdminRow,
+  AdminSessionBundle,
   ApiProblem,
   AuctionView,
   AuthMe,
@@ -176,6 +179,93 @@ export const tiempoJustoApi = {
 
   getBalance(): Promise<BalanceView> {
     return request('/api/v1/payments/balance');
+  },
+
+  adminUsers(query = ''): Promise<AdminRow[]> {
+    return request(`/api/v1/admin/users?query=${encodeURIComponent(query)}`);
+  },
+
+  adminAuction(auctionId: string): Promise<AdminAuctionBundle> {
+    return request(`/api/v1/admin/auctions/${encodeURIComponent(auctionId)}`);
+  },
+
+  adminSession(sessionId: string): Promise<AdminSessionBundle> {
+    return request(`/api/v1/admin/sessions/${encodeURIComponent(sessionId)}`);
+  },
+
+  adminReviewQueue(): Promise<AdminRow[]> {
+    return request('/api/v1/admin/human-review-queue');
+  },
+
+  adminClaimReview(taskId: string): Promise<AdminRow> {
+    return request(`/api/v1/admin/human-review-queue/${encodeURIComponent(taskId)}/claim`, { method: 'POST' });
+  },
+
+  adminSafetyCase(caseId: string): Promise<AdminRow> {
+    return request(`/api/v1/admin/safety-cases/${encodeURIComponent(caseId)}`);
+  },
+
+  adminEvidenceTimeline(caseId: string): Promise<AdminRow[]> {
+    return request(`/api/v1/admin/safety-cases/${encodeURIComponent(caseId)}/evidence-timeline`);
+  },
+
+  adminDecideCase(caseId: string, outcome: string, finalSeverity: string, reason: string): Promise<AdminRow> {
+    return request(`/api/v1/admin/safety-cases/${encodeURIComponent(caseId)}/decision`, {
+      method: 'POST',
+      ...json({ outcome, finalSeverity, reason }),
+    });
+  },
+
+  adminAppeals(): Promise<AdminRow[]> {
+    return request('/api/v1/admin/appeals');
+  },
+
+  adminResolveAppeal(appealId: string, outcome: string, reason: string): Promise<AdminRow> {
+    return request(`/api/v1/admin/appeals/${encodeURIComponent(appealId)}/resolve`, {
+      method: 'POST',
+      ...json({ outcome, reason }),
+    });
+  },
+
+  adminRiskSignals(userId = ''): Promise<AdminRow[]> {
+    const suffix = userId.trim() ? `?userId=${encodeURIComponent(userId.trim())}` : '';
+    return request(`/api/v1/admin/risk-signals${suffix}`);
+  },
+
+  adminPayout(payoutId: string): Promise<AdminRow> {
+    return request(`/api/v1/admin/finance/payouts/${encodeURIComponent(payoutId)}`);
+  },
+
+  adminPayoutHolds(payoutId: string): Promise<AdminRow[]> {
+    return request(`/api/v1/admin/finance/payouts/${encodeURIComponent(payoutId)}/holds`);
+  },
+
+  adminCreatePayoutHold(payoutId: string, reasonCode: string, evidenceRef: string, safetyCaseId?: string): Promise<AdminRow> {
+    return request(`/api/v1/admin/finance/payouts/${encodeURIComponent(payoutId)}/holds`, {
+      method: 'POST',
+      ...json({ reasonCode, evidenceRef, safetyCaseId: safetyCaseId?.trim() || null }),
+    });
+  },
+
+  adminReleasePayoutHold(payoutId: string, holdId: string, reason: string): Promise<AdminRow> {
+    return request(`/api/v1/admin/finance/payouts/${encodeURIComponent(payoutId)}/holds/${encodeURIComponent(holdId)}/release`, {
+      method: 'POST',
+      ...json({ reason }),
+    });
+  },
+
+  adminLedger(transactionId: string): Promise<AdminRow[]> {
+    return request(`/api/v1/admin/finance/ledger/${encodeURIComponent(transactionId)}`);
+  },
+
+  adminAuditLog(caseId = ''): Promise<AdminRow[]> {
+    const suffix = caseId.trim() ? `?caseId=${encodeURIComponent(caseId.trim())}` : '';
+    return request(`/api/v1/admin/audit-log${suffix}`);
+  },
+
+  adminActions(targetId = ''): Promise<AdminRow[]> {
+    const suffix = targetId.trim() ? `?targetId=${encodeURIComponent(targetId.trim())}` : '';
+    return request(`/api/v1/admin/admin-actions${suffix}`);
   },
 };
 
