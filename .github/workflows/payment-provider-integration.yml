@@ -1,0 +1,79 @@
+name: Payment Provider Integration
+
+on:
+  pull_request:
+    paths:
+      - 'backend/finance/**'
+      - 'backend/app/**'
+      - 'database/migrations/V1_6__payment_provider_bindings.sql'
+      - 'database/migrations/V1_9__payment_webhook_reconciliation.sql'
+      - '.github/workflows/payment-provider-integration.yml'
+      - 'docs/providers/PAYMENT_SANDBOX_REAL_V1.md'
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/finance/**'
+      - 'backend/app/**'
+      - 'database/migrations/V1_6__payment_provider_bindings.sql'
+      - 'database/migrations/V1_9__payment_webhook_reconciliation.sql'
+      - '.github/workflows/payment-provider-integration.yml'
+      - 'docs/providers/PAYMENT_SANDBOX_REAL_V1.md'
+
+permissions:
+  contents: read
+
+jobs:
+  provider-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_DB: tiempojusto
+          POSTGRES_USER: tiempojusto
+          POSTGRES_PASSWORD: tiempojusto
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tiempojusto -d tiempojusto"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGPASSWORD: tiempojusto
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Apply schema and migrations through V1.9
+        run: |
+          set -euo pipefail
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/schema/TiempoJusto_PostgreSQL_Schema_V1_0.sql
+          for f in \
+            database/migrations/V1_1__geo_routing_eta.sql \
+            database/migrations/V1_2__webrtc_media.sql \
+            database/migrations/V1_3__oauth2_identity.sql \
+            database/migrations/V1_4__online_reconnect_persistence.sql \
+            database/migrations/V1_5__persistent_session_settlement.sql \
+            database/migrations/V1_6__payment_provider_bindings.sql \
+            database/migrations/V1_7__identity_provider_bindings.sql \
+            database/migrations/V1_8__bid_reservation_replacement.sql \
+            database/migrations/V1_9__payment_webhook_reconciliation.sql; do
+            psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f "$f"
+          done
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from (values ('finance.provider_webhook_event'),('finance.provider_reconciliation')) x(name) where to_regclass(name) is not null")" = "2"
+
+      - name: Run provider and application tests
+        run: mvn -B -f backend/pom.xml test
+
+      - name: Build integrated backend
+        run: mvn -B -f backend/pom.xml -DskipTests package
