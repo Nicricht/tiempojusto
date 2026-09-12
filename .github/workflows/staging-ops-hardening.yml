@@ -124,6 +124,6 @@ jobs:
         run: |
           BACKUP=$(find /tmp/tj-backups -name 'tiempojusto-*.dump' | head -1)
           sh ops/db/restore.sh "$BACKUP"
-          test "$(psql -d tiempojusto_restore_ci -Atc 'select count(*) from public.tj_schema_migration')" = "11"
-          test "$(psql -d tiempojusto_restore_ci -Atc \"select count(*) from iam.app_user where public_id='restore_probe'\")" = "1"
-          psql -d tiempojusto_restore_ci -Atc "select extname from pg_extension where extname='postgis'" | grep -qx postgis
+          psql -d tiempojusto_restore_ci -Atc 'select count(*) from public.tj_schema_migration' | grep -qx '11'
+          psql -d tiempojusto_restore_ci -Atc "select count(*) from iam.app_user where public_id = 'restore_probe'" | grep -qx '1'
+          psql -d tiempojusto_restore_ci -Atc "select extname from pg_extension where extname = 'postgis'" | grep -qx postgis
