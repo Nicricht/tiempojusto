@@ -15,7 +15,7 @@ CREATE TABLE finance.provider_webhook_event (
     payload_sha256 char(64) NOT NULL,
     processing_status varchar(32) NOT NULL DEFAULT 'RECEIVED'
         CHECK (processing_status IN (
-            'RECEIVED','PROCESSING','IGNORED','MATCHED','MISMATCH',
+            'RECEIVED','PROCESSING','IGNORED','MATCHED','MISMATCH','OBSERVED',
             'UNBOUND','PENDING_LOCAL_COMMIT','FAILED'
         )),
     attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
