@@ -18,6 +18,7 @@
     <module>finance</module>
     <module>geo</module>
     <module>media</module>
+    <module>identity</module>
     <module>app</module>
   </modules>
 </project>
