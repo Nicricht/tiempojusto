@@ -44,6 +44,8 @@ tiempojusto:
       shared-secret: ${TJ_KYC_VERIFF_SHARED_SECRET:}
   payment:
     provider: ${TJ_PAYMENT_PROVIDER:MOCK}
+    sandbox-probe-enabled: ${TJ_PAYMENT_SANDBOX_PROBE_ENABLED:false}
+    sandbox-probe-key: ${TJ_PAYMENT_SANDBOX_PROBE_KEY:}
     mercado-pago:
       base-url: ${TJ_PAYMENT_MP_BASE_URL:https://api.mercadopago.com}
       access-token: ${TJ_PAYMENT_MP_ACCESS_TOKEN:}
