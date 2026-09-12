@@ -4,14 +4,14 @@ import cl.tiempojusto.app.api.ApiProblem;
 import cl.tiempojusto.app.identity.VeriffIdentityVerificationAdapter.IdentityProviderException;
 import cl.tiempojusto.identity.IdentityVerificationPort;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.sql.Timestamp;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -90,17 +90,18 @@ public class KycApplicationService {
         }
 
         UUID verificationId = UUID.randomUUID();
+        Timestamp createdAt = Timestamp.from(session.createdAt());
         jdbc.update("""
                 insert into iam.identity_verification(
                     id, user_id, provider_code, provider_reference, status, verified_adult, created_at)
                 values (?, ?, ?, ?, 'PENDING', false, ?)
-                """, verificationId, userId, provider.providerCode(), session.providerReference(), session.createdAt());
+                """, verificationId, userId, provider.providerCode(), session.providerReference(), createdAt);
 
         jdbc.update("""
                 insert into iam.identity_provider_session(
                     verification_id, provider_code, provider_reference, created_at, updated_at)
                 values (?, ?, ?, ?, ?)
-                """, verificationId, provider.providerCode(), session.providerReference(), session.createdAt(), session.createdAt());
+                """, verificationId, provider.providerCode(), session.providerReference(), createdAt, createdAt);
 
         persistence.audit(userId, "KYC_PROVIDER_SESSION_STARTED", "IDENTITY_VERIFICATION", verificationId,
                 Map.of("provider", provider.providerCode()));
@@ -179,6 +180,7 @@ public class KycApplicationService {
         }
 
         boolean verified = decision.status() == IdentityVerificationPort.DecisionStatus.VERIFIED;
+        Timestamp decidedAt = verified ? Timestamp.from(decision.decidedAt()) : null;
         jdbc.update("""
                 update iam.identity_verification
                 set status = ?::platform.verification_status,
@@ -188,11 +190,12 @@ public class KycApplicationService {
                     verified_at = case when ? then ? else null end
                 where id = ?
                 """, decision.status().name(), decision.verifiedAdult(), decision.legalCountryCode(),
-                verified, verified ? decision.decidedAt() : null, verificationId);
+                verified, decidedAt, verificationId);
 
         jdbc.update("""
                 update iam.identity_provider_session
-                set normalized_status = ?, last_provider_event_at = clock_timestamp(), updated_at = clock_timestamp()
+                set normalized_status = ?::platform.verification_status,
+                    last_provider_event_at = clock_timestamp(), updated_at = clock_timestamp()
                 where verification_id = ?
                 """, decision.status().name(), verificationId);
 
@@ -209,7 +212,7 @@ public class KycApplicationService {
 
         jdbc.update("""
                 update iam.identity_provider_event
-                set applied_at = clock_timestamp(), normalized_status = ?
+                set applied_at = clock_timestamp(), normalized_status = ?::platform.verification_status
                 where id = ?
                 """, decision.status().name(), eventId);
 
