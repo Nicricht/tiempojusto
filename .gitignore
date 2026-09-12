@@ -3,6 +3,11 @@
 **/build/
 *.class
 
+# Node / frontend
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+
 # IDE
 .idea/
 .vscode/
