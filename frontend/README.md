@@ -36,6 +36,8 @@ npm run dev
 
 Abrir `http://localhost:5173`.
 
+Vite reenvía `/api` y `/actuator` al backend local en `:8080`, por lo que el navegador trabaja same-origin durante desarrollo y no necesita relajar CORS solo para desarrollo.
+
 ## Build
 
 ```bash
@@ -49,9 +51,11 @@ npm run build
 ## Configuración
 
 ```text
-VITE_TJ_API_BASE_URL=http://localhost:8080
+VITE_TJ_API_BASE_URL=
 VITE_TJ_DEV_MODE=true
 ```
+
+`VITE_TJ_API_BASE_URL` vacío significa same-origin. En un despliegue separado puede apuntar al origen HTTPS público de la API, acompañado por la política CORS correspondiente del backend.
 
 `VITE_TJ_DEV_MODE=true` existe únicamente para desarrollo controlado. En ese modo aparece un panel que permite guardar localmente un UUID de actor y enviar `X-TJ-Actor-Id`, alineado con el adapter de desarrollo del backend.
 
