@@ -97,6 +97,9 @@ public class KycWebhookReconciliationService {
 
     @Scheduled(fixedDelayString = "${tiempojusto.kyc.reconciliation.poll-ms:3000}")
     public void reconcilePending() {
+        // Most developer/test runtimes intentionally have no external KYC
+        // provider. In that mode do not touch provider-specific migration state.
+        if (providers.isEmpty()) return;
         for (PendingEvent event : claim(20)) {
             reconcile(event);
         }
@@ -104,6 +107,7 @@ public class KycWebhookReconciliationService {
 
     /** Visible to integration tests without exposing a product endpoint. */
     public int reconcileNowForTests() {
+        if (providers.isEmpty()) return 0;
         List<PendingEvent> events = claim(20);
         events.forEach(this::reconcile);
         return events.size();
