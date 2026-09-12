@@ -329,9 +329,17 @@ jobs:
           echo '22) Verify double-entry ledger before releasing the hold'
           test "$(sql_scalar "select count(*) from finance.ledger_transaction t where t.status='POSTED' and not exists (select 1 from (select transaction_id, coalesce(sum(amount_clp) filter(where direction='DEBIT'),0) d, coalesce(sum(amount_clp) filter(where direction='CREDIT'),0) c from finance.ledger_entry group by transaction_id) x where x.transaction_id=t.id and x.d=x.c and x.d>0)")" = "0"
 
-          echo '23) Fast-forward the exact 60-minute payout hold and wait for AVAILABLE'
-          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 \
-            -c "update finance.payout set pending_until=clock_timestamp()-interval '1 second' where id='$PAYOUT_ID'::uuid and status='PENDING_HOLD';"
+          echo '23) Fast-forward wall-clock eligibility while preserving the exact 60-minute invariant'
+          SOURCE_TX_ID=$(sql_scalar "select source_transaction_id from finance.payout where id='$PAYOUT_ID'::uuid")
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 <<SQL
+          update finance.ledger_transaction
+             set posted_at=clock_timestamp()-interval '61 minutes'
+           where id='$SOURCE_TX_ID'::uuid;
+          update finance.payout
+             set pending_until=(select posted_at+interval '60 minutes' from finance.ledger_transaction where id='$SOURCE_TX_ID'::uuid)
+           where id='$PAYOUT_ID'::uuid and status='PENDING_HOLD';
+          SQL
+          test "$(sql_scalar "select count(*) from finance.payout p join finance.ledger_transaction t on t.id=p.source_transaction_id where p.id='$PAYOUT_ID'::uuid and p.pending_until=t.posted_at+interval '60 minutes' and p.pending_until <= clock_timestamp()")" = "1"
           for i in $(seq 1 15); do
             PAYOUT_STATUS=$(sql_scalar "select status from finance.payout where id='$PAYOUT_ID'::uuid")
             if [ "$PAYOUT_STATUS" = "AVAILABLE" ]; then break; fi
