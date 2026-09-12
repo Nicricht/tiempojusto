@@ -291,7 +291,7 @@ jobs:
           # C. REJECTED is persisted and never activates the account.
           curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
             -H 'Content-Type: application/json' \
-            -d '{"role":"BIDDER","email":"kyc-rejected@tiempojusto.test","username":"kyc_rejected","displayName":"KYC Rejected"}' > /tmp/user-rejected.json
+            -d '{"role":"BIDDER","email":"kyc-rejected@tiempojusto.test","username":"kyc_rejected","displayName":"KYC Rejected","publicAge":30}' > /tmp/user-rejected.json
           USER_REJECTED=$(python3 -c 'import json; print(json.load(open("/tmp/user-rejected.json"))["userId"])')
           SESSION_REJECTED=$(python3 -c 'import uuid,sys; print(uuid.uuid5(uuid.NAMESPACE_URL, sys.argv[1]))' "$USER_REJECTED")
           curl -fsS -X POST http://localhost:8080/api/v1/identity/verifications -H "X-TJ-Actor-Id: $USER_REJECTED" > /tmp/kyc-rejected-start.json
@@ -303,7 +303,7 @@ jobs:
           # D. Provider transient failure is retried internally after the webhook was ACKed.
           curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
             -H 'Content-Type: application/json' \
-            -d '{"role":"BIDDER","email":"kyc-retry@tiempojusto.test","username":"kyc_retry","displayName":"KYC Retry"}' > /tmp/user-retry.json
+            -d '{"role":"BIDDER","email":"kyc-retry@tiempojusto.test","username":"kyc_retry","displayName":"KYC Retry","publicAge":30}' > /tmp/user-retry.json
           USER_RETRY=$(python3 -c 'import json; print(json.load(open("/tmp/user-retry.json"))["userId"])')
           SESSION_RETRY=$(python3 -c 'import uuid,sys; print(uuid.uuid5(uuid.NAMESPACE_URL, sys.argv[1]))' "$USER_RETRY")
           curl -fsS -X POST http://localhost:8080/api/v1/identity/verifications -H "X-TJ-Actor-Id: $USER_RETRY" > /tmp/kyc-retry-start.json
@@ -317,7 +317,7 @@ jobs:
           # E. A tampered provider API response is rejected, retried, then converges.
           curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
             -H 'Content-Type: application/json' \
-            -d '{"role":"BIDDER","email":"kyc-signature@tiempojusto.test","username":"kyc_signature","displayName":"KYC Signature"}' > /tmp/user-signature.json
+            -d '{"role":"BIDDER","email":"kyc-signature@tiempojusto.test","username":"kyc_signature","displayName":"KYC Signature","publicAge":30}' > /tmp/user-signature.json
           USER_SIGNATURE=$(python3 -c 'import json; print(json.load(open("/tmp/user-signature.json"))["userId"])')
           SESSION_SIGNATURE=$(python3 -c 'import uuid,sys; print(uuid.uuid5(uuid.NAMESPACE_URL, sys.argv[1]))' "$USER_SIGNATURE")
           curl -fsS -X POST http://localhost:8080/api/v1/identity/verifications -H "X-TJ-Actor-Id: $USER_SIGNATURE" > /tmp/kyc-signature-start.json
