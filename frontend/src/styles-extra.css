@@ -1,0 +1,137 @@
+.mvp-navigator {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid rgba(222, 217, 208, 0.95);
+  border-radius: 16px;
+  background: rgba(255, 253, 250, 0.94);
+  box-shadow: 0 14px 46px rgba(24, 27, 32, 0.16);
+  backdrop-filter: blur(14px);
+}
+
+.mvp-navigator > span {
+  padding: 0 7px;
+  color: #686b70;
+  font-size: 0.67rem;
+  font-weight: 850;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.mvp-navigator button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #686b70;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.mvp-navigator button:hover,
+.mvp-navigator button.active {
+  background: #15171b;
+  color: #fff;
+}
+
+.compact-actions {
+  margin-top: 0;
+}
+
+.field select {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 13px;
+  border: 1px solid #d8d2c8;
+  border-radius: 12px;
+  outline: none;
+  background: #fff;
+  color: #181b20;
+}
+
+.field select:focus {
+  border-color: #b67c31;
+  box-shadow: 0 0 0 3px rgba(240, 160, 58, 0.16);
+}
+
+.identity-list {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  margin-top: 16px;
+  border: 1px solid #ded9d0;
+  border-radius: 13px;
+  background: #ded9d0;
+}
+
+.identity-list > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 13px;
+  background: #fffdfa;
+}
+
+.identity-list small {
+  color: #686b70;
+  font-size: 0.7rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.identity-list code {
+  overflow: auto;
+  font-size: 0.75rem;
+}
+
+.kyc-action {
+  margin-top: 16px;
+}
+
+.proposal-summary {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 17px;
+  border-radius: 14px;
+  background: #f0ece5;
+}
+
+.proposal-summary > strong {
+  font-size: clamp(1.9rem, 4vw, 2.8rem);
+  letter-spacing: -0.055em;
+}
+
+.proposal-summary > span:not(.status),
+.proposal-summary > small {
+  color: #686b70;
+}
+
+@media (max-width: 650px) {
+  .mvp-navigator {
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    overflow-x: auto;
+  }
+
+  .mvp-navigator > span {
+    display: none;
+  }
+
+  .mvp-navigator button {
+    flex: 1;
+    min-width: max-content;
+  }
+
+  .compact-actions .button {
+    width: 100%;
+  }
+}

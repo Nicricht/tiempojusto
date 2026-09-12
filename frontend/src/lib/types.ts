@@ -1,3 +1,42 @@
+export type AuthMe = {
+  userId: string;
+  publicId: string;
+  role: string;
+  accountStatus: string;
+};
+
+export type KycStartResult = {
+  verificationId: string;
+  provider: string;
+  verificationUrl: string;
+  status: string;
+};
+
+export type KycStatusResult = {
+  verificationId: string;
+  provider: string;
+  status: string;
+  verifiedAdult: boolean;
+  legalCountryCode: string | null;
+  verifiedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+};
+
+export type ProposalView = {
+  id: string;
+  bidderUserId: string;
+  hostProfileId: string;
+  modality: string;
+  durationMinutes: number;
+  amountClp: number;
+  status: string;
+  validUntil: string;
+  withdrawnAt: string | null;
+  cooldownUntil: string | null;
+  lockVersion: number;
+};
+
 export type AuctionView = {
   id: string;
   hostUserId: string;

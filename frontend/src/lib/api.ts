@@ -1,12 +1,16 @@
 import type {
   ApiProblem,
   AuctionView,
+  AuthMe,
   BalanceView,
   BidResult,
   CloseNowResult,
   ConfirmResult,
   FinishResult,
   JoinResult,
+  KycStartResult,
+  KycStatusResult,
+  ProposalView,
   ReconnectState,
   SessionView,
 } from './types';
@@ -78,6 +82,29 @@ function json(body: unknown): RequestInit {
 export const tiempoJustoApi = {
   baseUrl: API_BASE_URL || window.location.origin,
   devMode: DEV_MODE,
+
+  me(): Promise<AuthMe> {
+    return request('/api/v1/auth/me');
+  },
+
+  startKyc(): Promise<KycStartResult> {
+    return request('/api/v1/identity/verifications', { method: 'POST' });
+  },
+
+  latestKyc(): Promise<KycStatusResult> {
+    return request('/api/v1/identity/verifications/latest');
+  },
+
+  createProposal(profileId: string, amountClp: number, durationMinutes: number): Promise<ProposalView> {
+    return request(`/api/v1/profiles/${encodeURIComponent(profileId)}/proposals`, {
+      method: 'POST',
+      ...json({ modality: 'ONLINE', durationMinutes, amountClp }),
+    });
+  },
+
+  getProposal(proposalId: string): Promise<ProposalView> {
+    return request(`/api/v1/proposals/${encodeURIComponent(proposalId)}`);
+  },
 
   getAuction(auctionId: string): Promise<AuctionView> {
     return request(`/api/v1/auctions/${encodeURIComponent(auctionId)}`);
