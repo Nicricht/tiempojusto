@@ -187,10 +187,10 @@ public class KycApplicationService {
                     verified_adult = ?,
                     legal_country_code = ?,
                     date_of_birth = null,
-                    verified_at = case when ? then ? else null end
+                    verified_at = ?::timestamptz
                 where id = ?
                 """, decision.status().name(), decision.verifiedAdult(), decision.legalCountryCode(),
-                verified, decidedAt, verificationId);
+                decidedAt, verificationId);
 
         jdbc.update("""
                 update iam.identity_provider_session
