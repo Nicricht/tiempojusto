@@ -99,10 +99,6 @@ jobs:
             psql -h localhost -U tiempojusto -d tiempojusto -Atc "$1"
           }
 
-          json_field() {
-            python3 -c "import json; print(json.load(open('$1'))$2)"
-          }
-
           echo '1) Register HOST Camila Test'
           curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
             -H 'Content-Type: application/json' \
@@ -224,7 +220,7 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"cameraValid":true,"mediaFlowing":true,"audioMuted":false}' > /tmp/bidder-join.json
           test "$(sql_scalar "select count(*) from media.video_participant_state where video_room_id='$ROOM_ID'::uuid and camera_valid=true and media_flowing=true")" = "2"
-          test "$(sql_scalar "select count(*) from appointment.appointment_session where id='$SESSION_ID'::uuid and status='FREE_ONLINE'")" = "1"
+          test "$(sql_scalar "select count(*) from appointment.appointment_session where id='$SESSION_ID'::uuid and status='FREE_ACTIVE'")" = "1"
 
           echo '13) Fast-forward FREE_ONLINE to exactly 2 minutes'
           psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 <<SQL
