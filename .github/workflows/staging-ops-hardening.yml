@@ -1,0 +1,131 @@
+name: Staging Ops Hardening
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'database/**'
+      - 'ops/**'
+      - '.dockerignore'
+      - '.github/workflows/staging-ops-hardening.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'database/**'
+      - 'ops/**'
+      - '.dockerignore'
+      - '.github/workflows/staging-ops-hardening.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-and-containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Backend tests
+        run: mvn -B -f backend/pom.xml test
+      - name: Frontend build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Build backend container
+        run: docker build -f backend/app/Dockerfile -t tiempojusto-backend:ci .
+      - name: Build frontend container
+        run: docker build -f frontend/Dockerfile -t tiempojusto-frontend:ci .
+      - name: Validate staging Compose
+        env:
+          TJ_DB_PASSWORD: ci-not-a-secret
+          TJ_STAGING_HOST: staging.example.test
+          TJ_AUTH_JWT_ISSUER: https://issuer.example.test
+          TJ_AUTH_JWT_AUDIENCE: tiempojusto-staging
+          TJ_AUTH_JWT_JWK_SET_URI: https://issuer.example.test/.well-known/jwks.json
+          TJ_KYC_PROVIDER: VERIFF
+          TJ_PAYMENT_PROVIDER: MERCADO_PAGO
+        run: docker compose -f ops/staging/docker-compose.staging.yml config >/tmp/staging-compose.yml
+      - name: Validate Prometheus config and alert rules
+        run: |
+          docker run --rm \
+            -v "$PWD/ops/observability:/etc/prometheus:ro" \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
+          docker run --rm \
+            -v "$PWD/ops/observability:/etc/prometheus:ro" \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v3.5.0 check rules /etc/prometheus/alerts.yml
+      - name: Validate Alertmanager config
+        run: |
+          docker run --rm \
+            -v "$PWD/ops/observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \
+            --entrypoint /bin/amtool \
+            prom/alertmanager:v0.28.1 check-config /etc/alertmanager/alertmanager.yml
+
+  migration-backup-restore:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_DB: tiempojusto
+          POSTGRES_USER: tiempojusto
+          POSTGRES_PASSWORD: tiempojusto
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U tiempojusto -d tiempojusto"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGDATABASE: tiempojusto
+      PGUSER: tiempojusto
+      PGPASSWORD: tiempojusto
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply controlled migrations twice
+        run: |
+          sh ops/db/migrate.sh
+          sh ops/db/migrate.sh
+          test "$(psql -Atc 'select count(*) from public.tj_schema_migration')" = "11"
+      - name: Seed restore marker
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          insert into iam.app_user(id, public_id, role, account_status, email)
+          values ('77777777-7777-7777-7777-777777777777','restore_probe','ADMIN','ACTIVE','restore-probe@tiempojusto.test');
+          SQL
+      - name: Create backup
+        env:
+          TJ_BACKUP_DIR: /tmp/tj-backups
+          TJ_BACKUP_RETENTION_DAYS: '1'
+        run: |
+          sh ops/db/backup.sh
+          ls -l /tmp/tj-backups
+          test "$(find /tmp/tj-backups -name 'tiempojusto-*.dump' | wc -l)" = "1"
+      - name: Restore into a new database and verify
+        env:
+          TJ_RESTORE_DATABASE: tiempojusto_restore_ci
+          TJ_RESTORE_CONFIRM: 'YES'
+        run: |
+          BACKUP=$(find /tmp/tj-backups -name 'tiempojusto-*.dump' | head -1)
+          sh ops/db/restore.sh "$BACKUP"
+          test "$(psql -d tiempojusto_restore_ci -Atc 'select count(*) from public.tj_schema_migration')" = "11"
+          test "$(psql -d tiempojusto_restore_ci -Atc \"select count(*) from iam.app_user where public_id='restore_probe'\")" = "1"
+          psql -d tiempojusto_restore_ci -Atc "select extname from pg_extension where extname='postgis'" | grep -qx postgis
