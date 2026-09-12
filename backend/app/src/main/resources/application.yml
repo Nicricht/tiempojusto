@@ -35,3 +35,10 @@ tiempojusto:
       token-uri: ${TJ_AUTH_REFRESH_TOKEN_URI:}
       client-id: ${TJ_AUTH_REFRESH_CLIENT_ID:}
       client-secret: ${TJ_AUTH_REFRESH_CLIENT_SECRET:}
+  kyc:
+    provider: ${TJ_KYC_PROVIDER:}
+    callback-url: ${TJ_KYC_CALLBACK_URL:}
+    veriff:
+      base-url: ${TJ_KYC_VERIFF_BASE_URL:}
+      api-key: ${TJ_KYC_VERIFF_API_KEY:}
+      shared-secret: ${TJ_KYC_VERIFF_SHARED_SECRET:}
