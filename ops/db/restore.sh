@@ -34,8 +34,10 @@ else
     echo "WARNING: checksum sidecar not found; continuing only because explicit confirmation was supplied." >&2
 fi
 
-EXISTS="$(psql -d postgres -At -v ON_ERROR_STOP=1 -v db="$TJ_RESTORE_DATABASE" \
-    -c "SELECT 1 FROM pg_database WHERE datname = :'db'")"
+EXISTS="$(psql -d postgres -At -v ON_ERROR_STOP=1 -v db="$TJ_RESTORE_DATABASE" <<'SQL'
+SELECT 1 FROM pg_database WHERE datname = :'db';
+SQL
+)"
 if [ -n "$EXISTS" ]; then
     echo "Refusing to overwrite existing database $TJ_RESTORE_DATABASE" >&2
     exit 6
