@@ -6,8 +6,8 @@ import cl.tiempojusto.app.payment.ProviderPaymentReconciliationEvaluator.LocalSt
 import cl.tiempojusto.app.payment.ProviderPaymentReconciliationEvaluator.Result;
 import cl.tiempojusto.finance.common.FinanceException;
 import cl.tiempojusto.finance.payment.provider.MercadoPagoPaymentPort;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -17,7 +17,6 @@ import org.springframework.stereotype.Service;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
