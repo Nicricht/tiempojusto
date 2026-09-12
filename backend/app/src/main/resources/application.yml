@@ -42,6 +42,9 @@ tiempojusto:
       base-url: ${TJ_KYC_VERIFF_BASE_URL:}
       api-key: ${TJ_KYC_VERIFF_API_KEY:}
       shared-secret: ${TJ_KYC_VERIFF_SHARED_SECRET:}
+    reconciliation:
+      poll-ms: ${TJ_KYC_RECONCILIATION_POLL_MS:3000}
+      max-attempts: ${TJ_KYC_RECONCILIATION_MAX_ATTEMPTS:12}
   payment:
     provider: ${TJ_PAYMENT_PROVIDER:MOCK}
     sandbox-probe-enabled: ${TJ_PAYMENT_SANDBOX_PROBE_ENABLED:false}

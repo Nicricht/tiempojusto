@@ -6,7 +6,9 @@ on:
       - 'backend/identity/**'
       - 'backend/app/**'
       - 'database/migrations/V1_7__identity_provider_bindings.sql'
+      - 'database/migrations/V1_10__kyc_webhook_reconciliation.sql'
       - 'docs/providers/P2_3_KYC_PROVIDER_ADAPTERS_V1.md'
+      - 'docs/providers/KYC_SANDBOX_REAL_V1.md'
       - '.github/workflows/kyc-provider-adapters.yml'
   push:
     branches: [ main ]
@@ -14,7 +16,9 @@ on:
       - 'backend/identity/**'
       - 'backend/app/**'
       - 'database/migrations/V1_7__identity_provider_bindings.sql'
+      - 'database/migrations/V1_10__kyc_webhook_reconciliation.sql'
       - 'docs/providers/P2_3_KYC_PROVIDER_ADAPTERS_V1.md'
+      - 'docs/providers/KYC_SANDBOX_REAL_V1.md'
       - '.github/workflows/kyc-provider-adapters.yml'
 
 jobs:
@@ -46,6 +50,8 @@ jobs:
       TJ_KYC_VERIFF_BASE_URL: http://127.0.0.1:18080
       TJ_KYC_VERIFF_API_KEY: test-api-key
       TJ_KYC_VERIFF_SHARED_SECRET: test-shared-secret
+      TJ_KYC_RECONCILIATION_POLL_MS: '500'
+      TJ_KYC_RECONCILIATION_MAX_ATTEMPTS: '8'
       SPRING_PROFILES_ACTIVE: ci
 
     steps:
@@ -63,8 +69,9 @@ jobs:
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
 
-      - name: Apply schema and migrations through V1.7
+      - name: Apply schema and migrations through V1.10
         run: |
+          set -euo pipefail
           psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/schema/TiempoJusto_PostgreSQL_Schema_V1_0.sql
           for f in \
             database/migrations/V1_1__geo_routing_eta.sql \
@@ -73,34 +80,49 @@ jobs:
             database/migrations/V1_4__online_reconnect_persistence.sql \
             database/migrations/V1_5__persistent_session_settlement.sql \
             database/migrations/V1_6__payment_provider_bindings.sql \
-            database/migrations/V1_7__identity_provider_bindings.sql; do
+            database/migrations/V1_7__identity_provider_bindings.sql \
+            database/migrations/V1_8__bid_reservation_replacement.sql \
+            database/migrations/V1_9__payment_webhook_reconciliation.sql \
+            database/migrations/V1_10__kyc_webhook_reconciliation.sql; do
             psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f "$f"
           done
           test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from (values ('iam.identity_provider_session'),('iam.identity_provider_event')) x(name) where to_regclass(name) is not null")" = "2"
-          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from pg_indexes where schemaname='iam' and indexname='identity_one_open_verification_per_provider_uidx'")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from information_schema.columns where table_schema='iam' and table_name='identity_provider_event' and column_name in ('processing_status','attempt_count','next_attempt_at','last_error_code','last_error_detail')")" = "5"
 
-      - name: Compile integrated backend
+      - name: Test and compile integrated backend
+        run: mvn -B -f backend/pom.xml test
+
+      - name: Build integrated backend
         run: mvn -B -f backend/pom.xml -DskipTests package
 
-      - name: Start Veriff-compatible local stub
+      - name: Start Veriff-compatible signed local stub
         run: |
           cat > /tmp/veriff_stub.py <<'PY'
-          import hashlib, hmac, json
+          import hashlib, hmac, json, uuid
           from http.server import BaseHTTPRequestHandler, HTTPServer
 
           API_KEY = 'test-api-key'
           SECRET = b'test-shared-secret'
-          SESSION = '11111111-1111-4111-8111-111111111111'
+          decisions = {}
+          fail_next = {}
+
+          def session_for(user_id):
+              return str(uuid.uuid5(uuid.NAMESPACE_URL, user_id))
 
           class Handler(BaseHTTPRequestHandler):
               def log_message(self, fmt, *args):
                   print(fmt % args, flush=True)
 
-              def send_json(self, status, obj):
+              def send_json(self, status, obj, bad_signature=False):
                   raw = json.dumps(obj, separators=(',', ':')).encode()
+                  signature = hmac.new(SECRET, raw, hashlib.sha256).hexdigest()
+                  if bad_signature:
+                      signature = '0' * 64
                   self.send_response(status)
                   self.send_header('Content-Type', 'application/json')
                   self.send_header('Content-Length', str(len(raw)))
+                  self.send_header('X-AUTH-CLIENT', API_KEY)
+                  self.send_header('X-HMAC-SIGNATURE', signature)
                   self.end_headers()
                   self.wfile.write(raw)
 
@@ -123,42 +145,70 @@ jobs:
                   return self.rfile.read(length)
 
               def do_POST(self):
-                  if self.path != '/v1/sessions':
-                      return self.send_json(404, {'error':'not_found'})
-                  if self.headers.get('X-AUTH-CLIENT') != API_KEY:
-                      return self.send_json(401, {'error':'bad_client'})
-                  body = self.read_body()
-                  data = json.loads(body or b'{}')
-                  verification = data.get('verification')
-                  # TiempoJusto sends a non-semantic UUID as endUserId for
-                  # correlation and does not duplicate it in vendorData.
-                  if not isinstance(verification, dict) or not verification.get('endUserId'):
-                      print('invalid create-session payload:', data, flush=True)
-                      return self.send_json(422, {'error':'missing_end_user_id'})
-                  return self.send_json(200, {'verification': {
-                      'id': SESSION,
-                      'url': 'https://verify.example/session/' + SESSION
-                  }})
+                  if self.path == '/v1/sessions':
+                      if self.headers.get('X-AUTH-CLIENT') != API_KEY:
+                          return self.send_json(401, {'error':'bad_client'})
+                      data = json.loads(self.read_body() or b'{}')
+                      verification = data.get('verification')
+                      if not isinstance(verification, dict) or not verification.get('endUserId'):
+                          return self.send_json(422, {'error':'missing_end_user_id'})
+                      session = session_for(verification['endUserId'])
+                      decisions.setdefault(session, 'approved')
+                      return self.send_json(200, {'status':'success','verification': {
+                          'id': session,
+                          'url': 'https://verify.example/session/' + session
+                      }})
+
+                  if self.path.startswith('/__test__/decision/'):
+                      parts = self.path.split('/')
+                      session, state = parts[-2], parts[-1]
+                      decisions[session] = state
+                      return self.send_json(200, {'ok':True})
+
+                  if self.path.startswith('/__test__/fail-next/'):
+                      parts = self.path.split('/')
+                      session, mode = parts[-2], parts[-1]
+                      fail_next[session] = mode
+                      return self.send_json(200, {'ok':True})
+
+                  return self.send_json(404, {'error':'not_found'})
 
               def do_GET(self):
-                  if self.path != f'/v1/sessions/{SESSION}/decision':
+                  prefix = '/v1/sessions/'
+                  suffix = '/decision'
+                  if not (self.path.startswith(prefix) and self.path.endswith(suffix)):
                       return self.send_json(404, {'error':'not_found'})
+                  session = self.path[len(prefix):-len(suffix)]
                   if self.headers.get('X-AUTH-CLIENT') != API_KEY:
                       return self.send_json(401, {'error':'bad_client'})
-                  expected = hmac.new(SECRET, SESSION.encode(), hashlib.sha256).hexdigest()
+                  expected = hmac.new(SECRET, session.encode(), hashlib.sha256).hexdigest()
                   if self.headers.get('X-HMAC-SIGNATURE') != expected:
                       return self.send_json(401, {'error':'bad_hmac'})
-                  return self.send_json(200, {
-                      'status': 'success',
-                      'verification': {
-                          'id': SESSION,
-                          'status': 'approved',
-                          'code': 9001,
-                          'reasonCode': None,
-                          'person': {'dateOfBirth': '1995-01-01'},
-                          'document': {'country': 'CL'}
-                      }
-                  })
+
+                  mode = fail_next.pop(session, None)
+                  if mode == '429':
+                      return self.send_json(429, {'error':'rate_limited'})
+
+                  state = decisions.get(session, 'approved')
+                  if state == 'pending':
+                      payload = {'status':'success','verification': {
+                          'id':session,'status':'submitted','code':None,
+                          'reasonCode':None,'person':{},'document':{}
+                      }}
+                  elif state == 'declined':
+                      payload = {'status':'success','verification': {
+                          'id':session,'status':'declined','code':9103,
+                          'reasonCode':'DOCUMENT_INVALID',
+                          'person':{},'document':{'country':'CL'}
+                      }}
+                  else:
+                      payload = {'status':'success','verification': {
+                          'id':session,'status':'approved','code':9001,
+                          'reasonCode':None,
+                          'person':{'dateOfBirth':'1995-01-01'},
+                          'document':{'country':'CL'}
+                      }}
+                  return self.send_json(200, payload, bad_signature=(mode == 'bad-signature'))
 
           HTTPServer(('127.0.0.1', 18080), Handler).serve_forever()
           PY
@@ -180,69 +230,121 @@ jobs:
           cat /tmp/tiempojusto-kyc.log
           exit 1
 
-      - name: Execute provider KYC golden path
+      - name: Execute durable KYC provider contract
         run: |
           set -euo pipefail
 
+          wait_sql() {
+            local query="$1"
+            local expected="$2"
+            for i in $(seq 1 40); do
+              value=$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "$query")
+              if [ "$value" = "$expected" ]; then return 0; fi
+              sleep 0.5
+            done
+            echo "Timed out waiting for SQL: $query expected=$expected"
+            psql -h localhost -U tiempojusto -d tiempojusto -c "select provider_code, provider_reference, processing_status, attempt_count, normalized_status, last_error_code from iam.identity_provider_event order by received_at"
+            exit 1
+          }
+
+          signed_webhook() {
+            local session="$1"
+            local marker="$2"
+            local output="$3"
+            local body="{\"verification\":{\"id\":\"$session\",\"status\":\"submitted\",\"marker\":\"$marker\"}}"
+            local sig
+            sig=$(python3 -c 'import hashlib,hmac,sys; print(hmac.new(b"test-shared-secret", sys.argv[1].encode(), hashlib.sha256).hexdigest())' "$body")
+            curl -fsS -X POST http://localhost:8080/api/v1/webhooks/kyc/veriff \
+              -H 'Content-Type: application/json' \
+              -H 'X-AUTH-CLIENT: test-api-key' \
+              -H "X-HMAC-SIGNATURE: $sig" \
+              --data-binary "$body" > "$output"
+          }
+
+          # A. Out-of-order webhook arrives before the local provider session exists.
           curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
             -H 'Content-Type: application/json' \
-            -d '{"role":"HOST","email":"kyc-host@tiempojusto.test","username":"kyc_host","displayName":"KYC Host","publicAge":31,"supportsOnline":true}' > /tmp/user.json
-          USER_ID=$(python3 -c 'import json; print(json.load(open("/tmp/user.json"))["userId"])')
-          HOST_PROFILE_ID=$(python3 -c 'import json; print(json.load(open("/tmp/user.json"))["hostProfileId"])')
+            -d '{"role":"HOST","email":"kyc-order@tiempojusto.test","username":"kyc_order","displayName":"KYC Order","publicAge":31,"supportsOnline":true}' > /tmp/user-order.json
+          USER_ORDER=$(python3 -c 'import json; print(json.load(open("/tmp/user-order.json"))["userId"])')
+          HOST_PROFILE_ID=$(python3 -c 'import json; print(json.load(open("/tmp/user-order.json"))["hostProfileId"])')
+          SESSION_ORDER=$(python3 -c 'import uuid,sys; print(uuid.uuid5(uuid.NAMESPACE_URL, sys.argv[1]))' "$USER_ORDER")
 
-          START_CODE=$(curl -sS -o /tmp/kyc-start.json -w '%{http_code}' -X POST http://localhost:8080/api/v1/identity/verifications \
-            -H "X-TJ-Actor-Id: $USER_ID")
-          cat /tmp/kyc-start.json
-          test "$START_CODE" = "200"
-          grep -q '"provider":"VERIFF"' /tmp/kyc-start.json
-          grep -q '"status":"PENDING"' /tmp/kyc-start.json
-          grep -q 'https://verify.example/session/' /tmp/kyc-start.json
+          signed_webhook "$SESSION_ORDER" order-first /tmp/kyc-order-webhook.json
+          grep -q '"status":"RECEIVED"' /tmp/kyc-order-webhook.json
+          wait_sql "select processing_status from iam.identity_provider_event where provider_reference='$SESSION_ORDER' order by received_at desc limit 1" "PENDING_LOCAL_SESSION"
 
-          WEBHOOK='{"verification":{"id":"11111111-1111-4111-8111-111111111111","status":"submitted"}}'
-          SIGNATURE=$(python3 -c 'import hashlib,hmac,sys; print(hmac.new(b"test-shared-secret", sys.argv[1].encode(), hashlib.sha256).hexdigest())' "$WEBHOOK")
-
-          curl -fsS -X POST http://localhost:8080/api/v1/webhooks/kyc/veriff \
-            -H 'Content-Type: application/json' \
-            -H 'X-AUTH-CLIENT: test-api-key' \
-            -H "X-HMAC-SIGNATURE: $SIGNATURE" \
-            --data-binary "$WEBHOOK" > /tmp/kyc-webhook.json
-          cat /tmp/kyc-webhook.json
-          grep -q '"status":"VERIFIED"' /tmp/kyc-webhook.json
-          grep -q '"accountEligibleForActivation":true' /tmp/kyc-webhook.json
-
-          curl -fsS http://localhost:8080/api/v1/identity/verifications/latest \
-            -H "X-TJ-Actor-Id: $USER_ID" > /tmp/kyc-latest.json
-          grep -q '"status":"VERIFIED"' /tmp/kyc-latest.json
-          grep -q '"verifiedAdult":true' /tmp/kyc-latest.json
-          grep -q '"legalCountryCode":"CL"' /tmp/kyc-latest.json
-
-          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from iam.app_user where id='$USER_ID'::uuid and account_status='ACTIVE'")" = "1"
-          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from iam.identity_verification where user_id='$USER_ID'::uuid and provider_code='VERIFF' and status='VERIFIED' and verified_adult=true and date_of_birth is null")" = "1"
-          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from iam.identity_provider_session s join iam.identity_verification v on v.id=s.verification_id where v.user_id='$USER_ID'::uuid and s.normalized_status='VERIFIED'")" = "1"
-          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from iam.identity_provider_event where provider_code='VERIFF' and length(payload_sha256)=64 and normalized_status='VERIFIED'")" = "1"
-          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from information_schema.columns where table_schema='iam' and table_name='identity_provider_event' and column_name in ('payload','raw_payload','raw_body','body')")" = "0"
+          curl -fsS -X POST http://localhost:8080/api/v1/identity/verifications \
+            -H "X-TJ-Actor-Id: $USER_ORDER" > /tmp/kyc-order-start.json
+          grep -q "$SESSION_ORDER" /tmp/kyc-order-start.json
+          psql -h localhost -U tiempojusto -d tiempojusto -c "update iam.identity_provider_event set next_attempt_at=clock_timestamp() where provider_reference='$SESSION_ORDER'"
+          wait_sql "select status::text from iam.identity_verification where user_id='$USER_ORDER'::uuid order by created_at desc limit 1" "VERIFIED"
+          wait_sql "select processing_status from iam.identity_provider_event where provider_reference='$SESSION_ORDER' order by received_at desc limit 1" "APPLIED"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from iam.app_user where id='$USER_ORDER'::uuid and account_status='ACTIVE'")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from iam.identity_verification where user_id='$USER_ORDER'::uuid and verified_adult=true and date_of_birth is null and legal_country_code='CL'")" = "1"
           test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from profile.host_profile where id='$HOST_PROFILE_ID'::uuid and profile_status='DRAFT'")" = "1"
-          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from profile.profile_media where profile_id='$HOST_PROFILE_ID'::uuid")" = "0"
 
-          curl -fsS -X POST http://localhost:8080/api/v1/webhooks/kyc/veriff \
+          # B. Same signed payload is idempotent.
+          signed_webhook "$SESSION_ORDER" order-first /tmp/kyc-order-duplicate.json
+          grep -q '"duplicate":true' /tmp/kyc-order-duplicate.json
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from iam.identity_provider_event where provider_reference='$SESSION_ORDER'")" = "1"
+
+          # C. REJECTED is persisted and never activates the account.
+          curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
             -H 'Content-Type: application/json' \
-            -H 'X-AUTH-CLIENT: test-api-key' \
-            -H "X-HMAC-SIGNATURE: $SIGNATURE" \
-            --data-binary "$WEBHOOK" > /tmp/kyc-duplicate.json
-          grep -q '"duplicate":true' /tmp/kyc-duplicate.json
-          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from iam.identity_provider_event where provider_code='VERIFF'")" = "1"
+            -d '{"role":"BIDDER","email":"kyc-rejected@tiempojusto.test","username":"kyc_rejected","displayName":"KYC Rejected","publicAge":30,"supportsOnline":false}' > /tmp/user-rejected.json
+          USER_REJECTED=$(python3 -c 'import json; print(json.load(open("/tmp/user-rejected.json"))["userId"])')
+          SESSION_REJECTED=$(python3 -c 'import uuid,sys; print(uuid.uuid5(uuid.NAMESPACE_URL, sys.argv[1]))' "$USER_REJECTED")
+          curl -fsS -X POST http://localhost:8080/api/v1/identity/verifications -H "X-TJ-Actor-Id: $USER_REJECTED" > /tmp/kyc-rejected-start.json
+          curl -fsS -X POST "http://127.0.0.1:18080/__test__/decision/$SESSION_REJECTED/declined" > /dev/null
+          signed_webhook "$SESSION_REJECTED" rejected /tmp/kyc-rejected-webhook.json
+          wait_sql "select status::text from iam.identity_verification where user_id='$USER_REJECTED'::uuid order by created_at desc limit 1" "REJECTED"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from iam.app_user where id='$USER_REJECTED'::uuid and account_status='PENDING_VERIFICATION'")" = "1"
 
+          # D. Provider transient failure is retried internally after the webhook was ACKed.
+          curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
+            -H 'Content-Type: application/json' \
+            -d '{"role":"BIDDER","email":"kyc-retry@tiempojusto.test","username":"kyc_retry","displayName":"KYC Retry","publicAge":30,"supportsOnline":false}' > /tmp/user-retry.json
+          USER_RETRY=$(python3 -c 'import json; print(json.load(open("/tmp/user-retry.json"))["userId"])')
+          SESSION_RETRY=$(python3 -c 'import uuid,sys; print(uuid.uuid5(uuid.NAMESPACE_URL, sys.argv[1]))' "$USER_RETRY")
+          curl -fsS -X POST http://localhost:8080/api/v1/identity/verifications -H "X-TJ-Actor-Id: $USER_RETRY" > /tmp/kyc-retry-start.json
+          curl -fsS -X POST "http://127.0.0.1:18080/__test__/fail-next/$SESSION_RETRY/429" > /dev/null
+          signed_webhook "$SESSION_RETRY" retry /tmp/kyc-retry-webhook.json
+          wait_sql "select processing_status from iam.identity_provider_event where provider_reference='$SESSION_RETRY' order by received_at desc limit 1" "PENDING_PROVIDER"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select attempt_count from iam.identity_provider_event where provider_reference='$SESSION_RETRY' order by received_at desc limit 1")" -ge 1
+          psql -h localhost -U tiempojusto -d tiempojusto -c "update iam.identity_provider_event set next_attempt_at=clock_timestamp() where provider_reference='$SESSION_RETRY'"
+          wait_sql "select status::text from iam.identity_verification where user_id='$USER_RETRY'::uuid order by created_at desc limit 1" "VERIFIED"
+
+          # E. A tampered provider API response is rejected, retried, then converges.
+          curl -fsS -X POST http://localhost:8080/api/v1/sandbox/identity/register \
+            -H 'Content-Type: application/json' \
+            -d '{"role":"BIDDER","email":"kyc-signature@tiempojusto.test","username":"kyc_signature","displayName":"KYC Signature","publicAge":30,"supportsOnline":false}' > /tmp/user-signature.json
+          USER_SIGNATURE=$(python3 -c 'import json; print(json.load(open("/tmp/user-signature.json"))["userId"])')
+          SESSION_SIGNATURE=$(python3 -c 'import uuid,sys; print(uuid.uuid5(uuid.NAMESPACE_URL, sys.argv[1]))' "$USER_SIGNATURE")
+          curl -fsS -X POST http://localhost:8080/api/v1/identity/verifications -H "X-TJ-Actor-Id: $USER_SIGNATURE" > /tmp/kyc-signature-start.json
+          curl -fsS -X POST "http://127.0.0.1:18080/__test__/fail-next/$SESSION_SIGNATURE/bad-signature" > /dev/null
+          signed_webhook "$SESSION_SIGNATURE" bad-provider-signature /tmp/kyc-signature-webhook.json
+          wait_sql "select last_error_code from iam.identity_provider_event where provider_reference='$SESSION_SIGNATURE' order by received_at desc limit 1" "KYC_PROVIDER_RESPONSE_SIGNATURE_INVALID"
+          psql -h localhost -U tiempojusto -d tiempojusto -c "update iam.identity_provider_event set next_attempt_at=clock_timestamp() where provider_reference='$SESSION_SIGNATURE'"
+          wait_sql "select status::text from iam.identity_verification where user_id='$USER_SIGNATURE'::uuid order by created_at desc limit 1" "VERIFIED"
+
+          # F. Invalid webhook signature is rejected before persistence.
+          BAD_BODY="{\"verification\":{\"id\":\"$SESSION_SIGNATURE\",\"status\":\"submitted\",\"marker\":\"bad-hmac\"}}"
           HTTP_CODE=$(curl -sS -o /tmp/kyc-invalid.json -w '%{http_code}' -X POST http://localhost:8080/api/v1/webhooks/kyc/veriff \
             -H 'Content-Type: application/json' \
             -H 'X-AUTH-CLIENT: test-api-key' \
             -H 'X-HMAC-SIGNATURE: deadbeef' \
-            --data-binary "$WEBHOOK")
+            --data-binary "$BAD_BODY")
           test "$HTTP_CODE" = "401"
+
+          # G. Privacy, audit and outbox invariants.
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from information_schema.columns where table_schema='iam' and table_name='identity_provider_event' and column_name in ('payload','raw_payload','raw_body','body','document','biometric','selfie')")" = "0"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from platform.audit_event where event_type='KYC_PROVIDER_WEBHOOK_RECEIVED'")" -ge 4
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from platform.audit_event where event_type='KYC_PROVIDER_DECISION_APPLIED'")" -ge 4
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from platform.outbox_event where event_type='IDENTITY_VERIFICATION_UPDATED'")" -ge 4
 
       - name: Print logs on failure
         if: failure()
         run: |
-          cat /tmp/kyc-start.json || true
-          cat /tmp/kyc-webhook.json || true
           cat /tmp/tiempojusto-kyc.log || true
           cat /tmp/veriff-stub.log || true
+          psql -h localhost -U tiempojusto -d tiempojusto -c "select provider_code, provider_reference, processing_status, attempt_count, normalized_status, last_error_code, last_error_detail from iam.identity_provider_event order by received_at" || true

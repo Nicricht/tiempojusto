@@ -7,10 +7,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
+import tools.jackson.databind.ObjectMapper;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -33,22 +35,28 @@ import java.util.regex.Pattern;
  * TiempoJusto does not upload or persist provider documents/biometrics through
  * this adapter. The user completes the provider-hosted verification session and
  * only the opaque session reference plus normalized decision enter our system.
+ *
+ * Both incoming webhooks and Veriff API response bodies are authenticated with
+ * the shared-secret HMAC before their contents are trusted.
  */
 @Component
 @ConditionalOnProperty(prefix = "tiempojusto.kyc", name = "provider", havingValue = "veriff")
 public final class VeriffIdentityVerificationAdapter implements IdentityVerificationPort {
     private static final Pattern VERIFICATION_ID = Pattern.compile("\\\"id\\\"\\s*:\\s*\\\"([0-9a-fA-F-]{36})\\\"");
     private final RestClient client;
+    private final ObjectMapper json;
     private final String apiKey;
     private final byte[] sharedSecret;
 
     public VeriffIdentityVerificationAdapter(
+            ObjectMapper json,
             @Value("${tiempojusto.kyc.veriff.base-url:}") String baseUrl,
             @Value("${tiempojusto.kyc.veriff.api-key:}") String apiKey,
             @Value("${tiempojusto.kyc.veriff.shared-secret:}") String sharedSecret) {
         if (baseUrl == null || baseUrl.isBlank()) throw new IllegalStateException("Veriff base URL is required");
         if (apiKey == null || apiKey.isBlank()) throw new IllegalStateException("Veriff API key is required");
         if (sharedSecret == null || sharedSecret.isBlank()) throw new IllegalStateException("Veriff shared secret is required");
+        this.json = json;
         this.apiKey = apiKey;
         this.sharedSecret = sharedSecret.getBytes(StandardCharsets.UTF_8);
         this.client = RestClient.builder()
@@ -87,7 +95,7 @@ public final class VeriffIdentityVerificationAdapter implements IdentityVerifica
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("verification", verification))
                 .retrieve()
-                .body(Map.class));
+                .toEntity(String.class));
 
         Map<?, ?> value = nested(response, "verification");
         String id = requiredString(value, "id");
@@ -103,8 +111,9 @@ public final class VeriffIdentityVerificationAdapter implements IdentityVerifica
         Map<?, ?> response = exchange(() -> client.get()
                 .uri("/v1/sessions/{id}/decision", providerReference)
                 .header("X-HMAC-SIGNATURE", signature)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .retrieve()
-                .body(Map.class));
+                .toEntity(String.class));
 
         Object verificationValue = response.get("verification");
         if (!(verificationValue instanceof Map<?, ?> verification) || verification.isEmpty()) {
@@ -134,19 +143,7 @@ public final class VeriffIdentityVerificationAdapter implements IdentityVerifica
         if (rawBody == null || headers == null) return false;
         String client = headers.get("x-auth-client");
         String signature = headers.get("x-hmac-signature");
-        if (client == null || signature == null) return false;
-        if (!MessageDigest.isEqual(apiKey.getBytes(StandardCharsets.UTF_8), client.getBytes(StandardCharsets.UTF_8))) {
-            return false;
-        }
-        byte[] expected;
-        byte[] actual;
-        try {
-            expected = HexFormat.of().parseHex(hmacHex(rawBody));
-            actual = HexFormat.of().parseHex(signature.trim());
-        } catch (IllegalArgumentException ex) {
-            return false;
-        }
-        return MessageDigest.isEqual(expected, actual);
+        return apiKeyMatches(client) && hmacMatches(rawBody, signature);
     }
 
     @Override
@@ -156,6 +153,63 @@ public final class VeriffIdentityVerificationAdapter implements IdentityVerifica
         if (marker < 0) return Optional.empty();
         Matcher matcher = VERIFICATION_ID.matcher(rawBody.substring(marker));
         return matcher.find() ? Optional.of(matcher.group(1)) : Optional.empty();
+    }
+
+    private Map<?, ?> exchange(RemoteCall call) {
+        try {
+            ResponseEntity<String> response = call.execute();
+            String rawBody = response.getBody();
+            if (rawBody == null || rawBody.isBlank()) {
+                throw new IdentityProviderException("KYC_PROVIDER_RESPONSE_INVALID", "Veriff returned an empty response body");
+            }
+            String responseClient = response.getHeaders().getFirst("X-AUTH-CLIENT");
+            String responseSignature = response.getHeaders().getFirst("X-HMAC-SIGNATURE");
+            if (!apiKeyMatches(responseClient) || !hmacMatches(rawBody, responseSignature)) {
+                throw new IdentityProviderException("KYC_PROVIDER_RESPONSE_SIGNATURE_INVALID",
+                        "Veriff response signature validation failed");
+            }
+            try {
+                Object parsed = json.readValue(rawBody, Map.class);
+                if (!(parsed instanceof Map<?, ?> map)) {
+                    throw new IdentityProviderException("KYC_PROVIDER_RESPONSE_INVALID", "Veriff returned invalid JSON");
+                }
+                return map;
+            } catch (IdentityProviderException ex) {
+                throw ex;
+            } catch (Exception ex) {
+                throw new IdentityProviderException("KYC_PROVIDER_RESPONSE_INVALID", "Veriff returned invalid JSON");
+            }
+        } catch (RestClientResponseException ex) {
+            int status = ex.getStatusCode().value();
+            if (status == 408 || status == 429) {
+                throw new IdentityProviderException("KYC_PROVIDER_TIMEOUT", "Veriff timed out or rate limited the request");
+            }
+            if (status >= 400 && status < 500) {
+                throw new IdentityProviderException("KYC_PROVIDER_REQUEST_REJECTED", "Veriff rejected the request");
+            }
+            throw new IdentityProviderException("KYC_PROVIDER_UNAVAILABLE", "Veriff HTTP error " + status);
+        } catch (ResourceAccessException ex) {
+            throw new IdentityProviderException("KYC_PROVIDER_UNAVAILABLE", "Veriff could not be reached");
+        }
+    }
+
+    private boolean apiKeyMatches(String candidate) {
+        if (candidate == null) return false;
+        return MessageDigest.isEqual(apiKey.getBytes(StandardCharsets.UTF_8),
+                candidate.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private boolean hmacMatches(String value, String signature) {
+        if (signature == null || signature.isBlank()) return false;
+        byte[] expected;
+        byte[] actual;
+        try {
+            expected = HexFormat.of().parseHex(hmacHex(value));
+            actual = HexFormat.of().parseHex(signature.trim().toLowerCase(Locale.ROOT));
+        } catch (IllegalArgumentException ex) {
+            return false;
+        }
+        return MessageDigest.isEqual(expected, actual);
     }
 
     private String hmacHex(String value) {
@@ -168,30 +222,19 @@ public final class VeriffIdentityVerificationAdapter implements IdentityVerifica
         }
     }
 
-    private static Map<?, ?> exchange(RemoteCall call) {
-        try {
-            Map<?, ?> response = call.execute();
-            if (response == null) throw new IllegalStateException("KYC_PROVIDER_RESPONSE_INVALID");
-            return response;
-        } catch (RestClientResponseException ex) {
-            int status = ex.getStatusCode().value();
-            if (status == 408 || status == 429) throw new IdentityProviderException("KYC_PROVIDER_TIMEOUT", "Veriff timed out or rate limited the request");
-            if (status >= 400 && status < 500) throw new IdentityProviderException("KYC_PROVIDER_REQUEST_REJECTED", "Veriff rejected the request");
-            throw new IdentityProviderException("KYC_PROVIDER_UNAVAILABLE", "Veriff HTTP error " + status);
-        } catch (ResourceAccessException ex) {
-            throw new IdentityProviderException("KYC_PROVIDER_UNAVAILABLE", "Veriff could not be reached");
-        }
-    }
-
     private static Map<?, ?> nested(Map<?, ?> map, String key) {
         Object value = map.get(key);
-        if (!(value instanceof Map<?, ?> nested)) throw new IdentityProviderException("KYC_PROVIDER_RESPONSE_INVALID", "Missing " + key);
+        if (!(value instanceof Map<?, ?> nested)) {
+            throw new IdentityProviderException("KYC_PROVIDER_RESPONSE_INVALID", "Missing " + key);
+        }
         return nested;
     }
 
     private static String requiredString(Map<?, ?> map, String key) {
         String value = string(map, key);
-        if (value == null || value.isBlank()) throw new IdentityProviderException("KYC_PROVIDER_RESPONSE_INVALID", "Missing " + key);
+        if (value == null || value.isBlank()) {
+            throw new IdentityProviderException("KYC_PROVIDER_RESPONSE_INVALID", "Missing " + key);
+        }
         return value;
     }
 
@@ -213,7 +256,7 @@ public final class VeriffIdentityVerificationAdapter implements IdentityVerifica
 
     @FunctionalInterface
     private interface RemoteCall {
-        Map<?, ?> execute();
+        ResponseEntity<String> execute();
     }
 
     public static final class IdentityProviderException extends RuntimeException {
