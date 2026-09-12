@@ -6,7 +6,7 @@ Fuente funcional: Documento Maestro V1.7.
 
 Materializar un seam KYC provider-neutral para identidad y mayoría de edad sin convertir a TiempoJusto en custodio de documentos o biometría cruda.
 
-Este corte **no activa un proveedor KYC de producción**. Deja un candidato Veriff deshabilitado por defecto, un contrato provider-neutral, persistencia mínima y CI end-to-end con un stub compatible.
+Este corte **no activa un proveedor KYC de producción**. Mantiene a Veriff como candidato opt-in, con contrato provider-neutral, persistencia mínima, reconciliación durable y CI end-to-end con stub compatible.
 
 ## Reglas que conserva
 
@@ -21,7 +21,7 @@ Este corte **no activa un proveedor KYC de producción**. Deja un candidato Veri
 
 ## Contrato provider-neutral
 
-`backend/identity/` introduce:
+`backend/identity/` contiene:
 
 - `IdentityVerificationPort`
 - `IdentityProviderCapabilities`
@@ -58,12 +58,16 @@ El candidato usa el flujo documentado por Veriff:
 2. Webhook firmado para avisar que existe un cambio.
 3. `GET /v1/sessions/{id}/decision` para consultar la decisión normalizada.
 4. `X-AUTH-CLIENT` y `X-HMAC-SIGNATURE` para autenticación/firma donde corresponde.
+5. Las respuestas API se aceptan solo si su `X-AUTH-CLIENT` y HMAC del body son válidos.
 
-Referencias oficiales consultadas en septiembre de 2026:
+Referencias oficiales verificadas en septiembre de 2026:
 
 - https://devdocs.veriff.com/apidocs/v1sessions
 - https://devdocs.veriff.com/apidocs/v1sessionsiddecision-1
 - https://devdocs.veriff.com/docs/webhooks-guide
+- https://devdocs.veriff.com/v1/docs/hmac-authentication-and-endpoint-security
+
+La guía oficial indica entrega de webhooks al-menos-una-vez, posibilidad de entrega fuera de orden y necesidad de responder 200 rápidamente. Por eso el webhook se persiste primero y la consulta de decisión ocurre en un worker posterior.
 
 ## Mapping de decisión
 
@@ -77,7 +81,7 @@ Referencias oficiales consultadas en septiembre de 2026:
 
 TiempoJusto guarda solo el resultado necesario para elegibilidad, no el documento que lo produjo.
 
-## Persistencia V1.7
+## Persistencia
 
 `database/migrations/V1_7__identity_provider_bindings.sql` agrega:
 
@@ -85,7 +89,9 @@ TiempoJusto guarda solo el resultado necesario para elegibilidad, no el document
 - `iam.identity_provider_event`
 - índice único para impedir más de una verificación abierta por usuario/proveedor.
 
-`identity_provider_event` contiene únicamente hash SHA-256 del payload y metadatos normalizados para idempotencia/auditoría.
+`database/migrations/V1_10__kyc_webhook_reconciliation.sql` agrega estado durable de procesamiento, intentos y retry schedule al envelope del webhook.
+
+`identity_provider_event` contiene únicamente hash SHA-256 del payload y metadatos normalizados para idempotencia/auditoría. No contiene el payload crudo.
 
 ## Endpoints
 
@@ -102,7 +108,7 @@ Proveedor:
 POST /api/v1/webhooks/kyc/{provider}
 ```
 
-El webhook no requiere JWT de usuario porque proviene del proveedor, pero debe superar la validación criptográfica del adapter antes de cualquier mutación.
+El webhook no requiere JWT de usuario porque proviene del proveedor, pero debe superar la validación criptográfica del adapter antes de cualquier persistencia. Después del ACK, el worker reconcilia la decisión con retry y deduplicación.
 
 ## Sexo / género
 
@@ -114,27 +120,35 @@ Aunque algunos proveedores pueden devolver campos o estimaciones relacionadas, V
 
 `KYC Provider Adapters` valida:
 
-- 7/7 contract tests de Identity Core;
-- schema PostgreSQL 16/PostGIS + migraciones V1.1-V1.7;
-- compilación de todo el backend;
-- creación de sesión contra un stub Veriff compatible;
-- HMAC del request de decisión;
+- contract tests de Identity Core;
+- PostgreSQL 16/PostGIS + migraciones hasta V1.10;
+- compilación/test del backend completo;
+- creación de sesión contra stub Veriff compatible;
+- firma HMAC del request de decisión;
+- firma HMAC de respuestas API;
 - webhook HMAC válido;
-- activación solo para adulto verificado;
+- webhook HMAC inválido -> 401;
+- `VERIFIED` adulto y activación solo de cuenta pendiente;
+- `REJECTED` sin activación;
 - DOB no persistida;
-- perfil HOST sigue DRAFT;
-- ningún media ficticio se crea por KYC;
+- perfil HOST sigue `DRAFT`;
 - deduplicación de webhook;
-- HMAC inválido -> 401.
+- webhook fuera de orden antes de la sesión local;
+- retry tras 429;
+- rechazo/retry de respuesta provider con firma adulterada;
+- AuditEvent/Outbox.
 
-## Bloqueadores antes de producción
+## Bloqueadores antes de cerrar #23 / producción
 
-- contrato/comercial y cobertura real del proveedor en los países del piloto;
-- sandbox real con credenciales del proveedor;
+- sandbox real con credenciales Veriff fuera del repositorio;
+- BaseURL real de la integración;
+- callback y webhook HTTPS públicos configurados en el portal;
+- evidencia externa `VERIFIED` y `REJECTED`;
 - DPA, privacidad, retención y subprocesadores;
-- configuración productiva de callback/webhooks;
-- pruebas de reintentos, demoras, indisponibilidad y decisiones manuales;
-- validación de response signatures y rotación de secretos según configuración final;
+- cobertura comercial real en los países del piloto;
+- rotación de secretos según configuración final;
 - observabilidad sin registrar PII ni secretos.
 
-Por lo tanto, `VeriffIdentityVerificationAdapter` es un **candidate adapter**, no una afirmación de proveedor definitivo aprobado.
+El procedimiento y gate exacto están en `docs/providers/KYC_SANDBOX_REAL_V1.md`.
+
+Por lo tanto, `VeriffIdentityVerificationAdapter` sigue siendo un **candidate adapter**, no una afirmación de proveedor definitivo aprobado.
