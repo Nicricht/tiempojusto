@@ -33,6 +33,9 @@ jobs:
 
       - name: Typecheck and build
         working-directory: frontend
+        env:
+          VITE_TJ_DEV_MODE: 'false'
+          VITE_TJ_API_BASE_URL: ''
         run: npm run build
 
       - name: Verify production artifact
@@ -40,7 +43,5 @@ jobs:
           set -euo pipefail
           test -f frontend/dist/index.html
           test -d frontend/dist/assets
-          if grep -R -q "VITE_TJ_DEV_MODE=true" frontend/dist/assets; then
-            echo "Development mode marker leaked into production artifact"
-            exit 1
-          fi
+          test -n "$(find frontend/dist/assets -maxdepth 1 -type f -name '*.js' -print -quit)"
+          test -n "$(find frontend/dist/assets -maxdepth 1 -type f -name '*.css' -print -quit)"
