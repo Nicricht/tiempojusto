@@ -9,7 +9,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Repository
-public final class JdbcProviderPaymentStateRepository implements ProviderPaymentStateRepository {
+public class JdbcProviderPaymentStateRepository implements ProviderPaymentStateRepository {
     private final JdbcTemplate jdbc;
 
     public JdbcProviderPaymentStateRepository(JdbcTemplate jdbc) {
