@@ -37,6 +37,10 @@ jobs:
 
       - name: Verify production artifact
         run: |
+          set -euo pipefail
           test -f frontend/dist/index.html
           test -d frontend/dist/assets
-          ! grep -R "X-TJ-Actor-Id" frontend/dist/assets/*.js | grep -q "VITE_TJ_DEV_MODE=true"
+          if grep -R -q "VITE_TJ_DEV_MODE=true" frontend/dist/assets; then
+            echo "Development mode marker leaked into production artifact"
+            exit 1
+          fi
