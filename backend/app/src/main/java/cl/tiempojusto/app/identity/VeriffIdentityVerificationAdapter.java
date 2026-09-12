@@ -78,7 +78,8 @@ public final class VeriffIdentityVerificationAdapter implements IdentityVerifica
     public VerificationSession start(StartVerification command) {
         Map<String, Object> verification = new LinkedHashMap<>();
         verification.put("callback", command.callbackUrl());
-        verification.put("vendorData", command.userId().toString());
+        // endUserId is already a non-semantic UUID and is enough to correlate the
+        // provider session. Avoid duplicating the same identifier in vendorData.
         verification.put("endUserId", command.userId().toString());
 
         Map<?, ?> response = exchange(() -> client.post()
