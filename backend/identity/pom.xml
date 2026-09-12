@@ -4,21 +4,10 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <groupId>cl.tiempojusto</groupId>
-  <artifactId>tiempojusto-backend-reactor</artifactId>
+  <artifactId>identity-core</artifactId>
   <version>1.0.0</version>
-  <packaging>pom</packaging>
-
   <properties>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
-
-  <modules>
-    <module>state-machines</module>
-    <module>finance</module>
-    <module>geo</module>
-    <module>media</module>
-    <module>identity</module>
-    <module>app</module>
-  </modules>
 </project>
