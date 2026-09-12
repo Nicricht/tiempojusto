@@ -40,15 +40,20 @@ checksum_base_schema() {
 
 applied_checksum() {
     version="$1"
-    psql -At -v ON_ERROR_STOP=1 -v version="$version" \
-        -c "SELECT checksum_sha256 FROM public.tj_schema_migration WHERE version = :'version'" 2>/dev/null || true
+    psql -At -v ON_ERROR_STOP=1 -v version="$version" 2>/dev/null <<'SQL' || true
+SELECT checksum_sha256
+  FROM public.tj_schema_migration
+ WHERE version = :'version';
+SQL
 }
 
 record_version() {
     version="$1"
     checksum="$2"
-    psql -v ON_ERROR_STOP=1 -v version="$version" -v checksum="$checksum" \
-        -c "INSERT INTO public.tj_schema_migration(version, checksum_sha256) VALUES (:'version', :'checksum')"
+    psql -v ON_ERROR_STOP=1 -v version="$version" -v checksum="$checksum" <<'SQL'
+INSERT INTO public.tj_schema_migration(version, checksum_sha256)
+VALUES (:'version', :'checksum');
+SQL
 }
 
 apply_file() {
