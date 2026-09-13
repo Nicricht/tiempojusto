@@ -1,0 +1,76 @@
+name: WebRTC TURN Browser Relay
+
+on:
+  pull_request:
+    paths:
+      - 'backend/media/**'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/api/WebRtcSessionController.java'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/application/WebRtcSessionService.java'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/config/WebRtcProviderConfiguration.java'
+      - 'frontend/src/lib/webrtc.ts'
+      - 'frontend/e2e/**'
+      - 'ops/staging/docker-compose.staging.yml'
+      - '.github/workflows/webrtc-browser.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/media/**'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/api/WebRtcSessionController.java'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/application/WebRtcSessionService.java'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/config/WebRtcProviderConfiguration.java'
+      - 'frontend/src/lib/webrtc.ts'
+      - 'frontend/e2e/**'
+      - 'ops/staging/docker-compose.staging.yml'
+      - '.github/workflows/webrtc-browser.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  relay-only-two-browsers:
+    runs-on: ubuntu-latest
+    env:
+      TJ_TURN_SHARED_SECRET: ci-turn-shared-secret
+      TJ_TURN_URL: turn:127.0.0.1:3478?transport=udp
+      TJ_WEBRTC_PROBE_URL: http://127.0.0.1:4173/webrtc-relay.html
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: Start isolated coturn relay
+        run: |
+          docker run -d --name tj-turn --network host \
+            coturn/coturn:4.18.0-r0 \
+            -n --log-file=stdout --fingerprint \
+            --use-auth-secret --static-auth-secret="$TJ_TURN_SHARED_SECRET" \
+            --realm=localhost --external-ip=127.0.0.1 \
+            --listening-ip=127.0.0.1 --relay-ip=127.0.0.1 \
+            --listening-port=3478 --min-port=49160 --max-port=49200 \
+            --allow-loopback-peers --no-multicast-peers --no-cli
+          sleep 2
+          docker ps --filter name=tj-turn
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - name: Serve secure-local probe page
+        run: |
+          python3 -m http.server 4173 --bind 127.0.0.1 --directory frontend/e2e >/tmp/tj-webrtc-http.log 2>&1 &
+          echo $! >/tmp/tj-webrtc-http.pid
+          for i in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:4173/webrtc-relay.html >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/tj-webrtc-http.log
+          exit 1
+      - name: Connect two Chromium browsers through TURN relay only
+        working-directory: frontend
+        run: node e2e/webrtc-relay.mjs
+      - name: Dump coturn logs on failure
+        if: failure()
+        run: docker logs tj-turn || true
+      - name: Stop coturn
+        if: always()
+        run: docker rm -f tj-turn || true
