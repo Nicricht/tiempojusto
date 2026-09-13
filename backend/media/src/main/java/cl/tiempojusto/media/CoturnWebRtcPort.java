@@ -60,9 +60,6 @@ public final class CoturnWebRtcPort implements WebRtcPort {
         Objects.requireNonNull(room, "room required");
         Objects.requireNonNull(userId, "userId required");
         Objects.requireNonNull(now, "now required");
-        if (!PROVIDER.equals(room.provider())) {
-            throw MediaException.of("TURN_PROVIDER_MISMATCH", "Room does not belong to coturn");
-        }
         if (room.kind() == RoomKind.ONLINE_PRIVATE && room.persistentRecordingEnabled()) {
             throw MediaException.of("PRIVATE_RECORDING_FORBIDDEN", "Private Online rooms cannot enable persistent recording");
         }
