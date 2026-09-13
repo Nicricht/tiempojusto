@@ -89,7 +89,8 @@ for entry in \
     "V1_7|database/migrations/V1_7__identity_provider_bindings.sql" \
     "V1_8|database/migrations/V1_8__bid_reservation_replacement.sql" \
     "V1_9|database/migrations/V1_9__payment_webhook_reconciliation.sql" \
-    "V1_10|database/migrations/V1_10__kyc_webhook_reconciliation.sql"
+    "V1_10|database/migrations/V1_10__kyc_webhook_reconciliation.sql" \
+    "V1_11|database/migrations/V1_11__webrtc_signaling.sql"
 do
     version="${entry%%|*}"
     file="${entry#*|}"
