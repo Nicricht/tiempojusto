@@ -3,18 +3,23 @@ import type {
   AdminRow,
   AdminSessionBundle,
   ApiProblem,
+  AuctionPageView,
   AuctionView,
   AuthMe,
   BalanceView,
   BidResult,
+  BlockState,
   CloseNowResult,
   ConfirmResult,
+  DiscoveryPage,
   FinishResult,
   JoinResult,
   KycStartResult,
   KycStatusResult,
+  ProfileView,
   ProposalView,
   ReconnectState,
+  SafetyReportResult,
   SessionView,
   WebRtcConfig,
   WebRtcSignalBatch,
@@ -23,6 +28,7 @@ import type {
 
 const API_BASE_URL = (import.meta.env.VITE_TJ_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 const DEV_MODE = import.meta.env.VITE_TJ_DEV_MODE === 'true';
+const ACCESS_TOKEN_KEY = 'tj.accessToken';
 
 export class TiempoJustoApiError extends Error {
   readonly status: number;
@@ -37,7 +43,7 @@ export class TiempoJustoApiError extends Error {
 }
 
 function accessToken(): string | null {
-  return window.localStorage.getItem('tj.accessToken');
+  return window.sessionStorage.getItem(ACCESS_TOKEN_KEY) ?? window.localStorage.getItem(ACCESS_TOKEN_KEY);
 }
 
 function devActorId(): string | null {
@@ -101,6 +107,14 @@ export const tiempoJustoApi = {
     return request('/api/v1/identity/verifications/latest');
   },
 
+  discoverOnline(limit = 20): Promise<DiscoveryPage> {
+    return request(`/api/v1/discovery?modality=ONLINE&limit=${Math.max(1, Math.min(limit, 50))}`);
+  },
+
+  getProfile(profileId: string): Promise<ProfileView> {
+    return request(`/api/v1/profiles/${encodeURIComponent(profileId)}`);
+  },
+
   createProposal(profileId: string, amountClp: number, durationMinutes: number): Promise<ProposalView> {
     return request(`/api/v1/profiles/${encodeURIComponent(profileId)}/proposals`, {
       method: 'POST',
@@ -110,6 +124,10 @@ export const tiempoJustoApi = {
 
   getProposal(proposalId: string): Promise<ProposalView> {
     return request(`/api/v1/proposals/${encodeURIComponent(proposalId)}`);
+  },
+
+  listAuctions(limit = 20): Promise<AuctionPageView> {
+    return request(`/api/v1/auctions?limit=${Math.max(1, Math.min(limit, 50))}`);
   },
 
   getAuction(auctionId: string): Promise<AuctionView> {
@@ -199,6 +217,29 @@ export const tiempoJustoApi = {
     return request('/api/v1/payments/balance');
   },
 
+  createSafetyReport(targetUserId: string, category: string, description: string, appointmentId?: string): Promise<SafetyReportResult> {
+    return request('/api/v1/reports', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': crypto.randomUUID(),
+      },
+      body: JSON.stringify({ targetUserId, appointmentId: appointmentId?.trim() || null, category, description }),
+    });
+  },
+
+  getBlockState(userId: string): Promise<BlockState> {
+    return request(`/api/v1/users/${encodeURIComponent(userId)}/block`);
+  },
+
+  blockUser(userId: string): Promise<BlockState> {
+    return request(`/api/v1/users/${encodeURIComponent(userId)}/block`, { method: 'POST' });
+  },
+
+  unblockUser(userId: string): Promise<BlockState> {
+    return request(`/api/v1/users/${encodeURIComponent(userId)}/block`, { method: 'DELETE' });
+  },
+
   adminUsers(query = ''): Promise<AdminRow[]> {
     return request(`/api/v1/admin/users?query=${encodeURIComponent(query)}`);
   },
@@ -286,6 +327,22 @@ export const tiempoJustoApi = {
     return request(`/api/v1/admin/admin-actions${suffix}`);
   },
 };
+
+export function setAccessToken(token: string): void {
+  const clean = token.trim();
+  window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+  if (clean) window.sessionStorage.setItem(ACCESS_TOKEN_KEY, clean);
+  else window.sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+}
+
+export function getAccessToken(): string {
+  return accessToken() ?? '';
+}
+
+export function clearAccessToken(): void {
+  window.sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+  window.localStorage.removeItem(ACCESS_TOKEN_KEY);
+}
 
 export function setDevActorId(actorId: string): void {
   if (!DEV_MODE) return;

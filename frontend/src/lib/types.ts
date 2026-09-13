@@ -23,6 +23,27 @@ export type KycStatusResult = {
   createdAt: string;
 };
 
+export type ProfileView = {
+  id: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  bio: string;
+  publicAge: number | null;
+  modalities: string[];
+  approximateZone: string | null;
+  mapVisible: boolean;
+  selfDeclaredAttributes: Record<string, string>;
+  profileStatus: string;
+  version: number;
+};
+
+export type DiscoveryPage = {
+  items: ProfileView[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
 export type ProposalView = {
   id: string;
   bidderUserId: string;
@@ -52,6 +73,12 @@ export type AuctionView = {
   winnerUserId: string | null;
   winningBidId: string | null;
   lockVersion: number;
+};
+
+export type AuctionPageView = {
+  items: AuctionView[];
+  nextCursor: string | null;
+  hasMore: boolean;
 };
 
 export type BidResult = {
@@ -173,6 +200,17 @@ export type BalanceView = {
   availableClp: number;
   heldForReviewClp: number;
   paidOutClp: number;
+};
+
+export type SafetyReportResult = {
+  id: string;
+  targetUserId: string;
+  status: string;
+};
+
+export type BlockState = {
+  userId: string;
+  blocked: boolean;
 };
 
 export type AdminRow = Record<string, unknown>;

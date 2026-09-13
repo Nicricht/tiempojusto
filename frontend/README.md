@@ -1,24 +1,27 @@
 # TiempoJusto Frontend
 
-Primera base funcional del **MVP Production V1 ONLINE**.
+Frontend funcional del **MVP Production V1 ONLINE**.
 
-Esta aplicación no reemplaza reglas de negocio del backend. Auction, elegibilidad, billing, settlement, payout y timers autoritativos continúan viviendo en Spring Boot/PostgreSQL.
+La aplicación no reemplaza reglas de negocio del backend. Auction, elegibilidad, billing, settlement, payout, reconnect y timers autoritativos continúan viviendo en Spring Boot/PostgreSQL.
 
-## Alcance de este corte
+## Alcance actual
 
-- Home del MVP ONLINE.
-- Consulta de Auction por UUID.
-- Bid real contra `POST /api/v1/auctions/{auctionId}/bids`.
-- Ganar Ahora contra el endpoint real y continuidad hacia Appointment.
-- Confirmación de Winner.
-- Consulta y join de sesión ONLINE.
-- Consentimiento de sesión pagada.
-- Consulta de reconnect y aceptación bilateral de resume.
+- Golden Path integrado en `#/flow`.
+- Acceso mediante OIDC Authorization Code + PKCE configurable por entorno.
+- KYC mediante el proveedor configurado por backend.
+- Discovery ONLINE y lectura de perfil HOST sin UUID manual.
+- Proposal ONLINE.
+- Listado de Auctions ONLINE abiertas, Bid y Ganar Ahora.
+- Confirmación de Winner y continuidad hacia Session.
+- WebRTC/TURN real con cámara obligatoria.
+- FREE_ONLINE, consentimiento pagado, reconnect y resume bilateral usando estado de servidor.
 - Finalización de sesión y visualización del estado de settlement.
 - Wallet mediante `GET /api/v1/payments/balance`.
-- Estados loading, error y vacío para las superficies implementadas.
+- Reportar y bloquear como acciones separadas.
+- Admin UI separada en `#/admin`.
+- Estados loading/error/vacío en las superficies principales.
 
-Todavía no significa frontend completo. Onboarding/KYC real, discovery, perfil, Proposal, OAuth/OIDC productivo, WebRTC/TURN real, Safety completo y Admin UI se cierran en sus gates del MVP Production V1.
+La integración externa de OAuth/OIDC, KYC, Payment y TURN público sigue requiriendo el entorno staging real. El repositorio no afirma evidencia externa que todavía no haya sido ejecutada.
 
 ## Ejecutar localmente
 
@@ -46,27 +49,34 @@ npm install
 npm run build
 ```
 
-`npm run build` ejecuta primero TypeScript estricto y luego produce `frontend/dist` con Vite.
+`npm run build` ejecuta TypeScript estricto y produce `frontend/dist` con Vite.
 
 ## Configuración
 
 ```text
 VITE_TJ_API_BASE_URL=
 VITE_TJ_DEV_MODE=true
+VITE_TJ_OIDC_AUTHORIZATION_ENDPOINT=
+VITE_TJ_OIDC_TOKEN_ENDPOINT=
+VITE_TJ_OIDC_CLIENT_ID=
+VITE_TJ_OIDC_SCOPE=openid profile
+VITE_TJ_OIDC_REDIRECT_URI=
 ```
 
 `VITE_TJ_API_BASE_URL` vacío significa same-origin. En un despliegue separado puede apuntar al origen HTTPS público de la API, acompañado por la política CORS correspondiente del backend.
 
-`VITE_TJ_DEV_MODE=true` existe únicamente para desarrollo controlado. En ese modo aparece un panel que permite guardar localmente un UUID de actor y enviar `X-TJ-Actor-Id`, alineado con el adapter de desarrollo del backend.
+`VITE_TJ_DEV_MODE=true` existe únicamente para desarrollo controlado. En ese modo puede enviarse `X-TJ-Actor-Id`. Debe estar desactivado en producción.
 
-En producción debe estar desactivado. La aplicación está preparada para enviar `Authorization: Bearer <token>` cuando exista un access token real, pero la integración OAuth/OIDC productiva sigue siendo un gate separado.
+El login productivo usa Authorization Code + PKCE. El navegador solo recibe configuración pública del cliente OIDC. Nunca colocar client secrets, credenciales KYC, claves de pago ni secretos TURN en variables `VITE_*`, porque Vite las incorpora al bundle.
 
-Nunca colocar access tokens, credenciales de proveedor, secretos KYC, claves de pago ni secretos TURN en variables `VITE_*`, porque Vite las incorpora al bundle del navegador.
+El access token de la SPA se mantiene en `sessionStorage` por defecto. El backend sigue validando issuer, audience, firma y el vínculo issuer/subject con la identidad TiempoJusto.
 
-## Regla de timers
+## Reglas de seguridad y producto
 
-Los countdowns usan timestamps entregados por el servidor únicamente para representación. El navegador no adjudica Auction, no extiende anti-sniping, no decide billable seconds y no vuelve un payout `AVAILABLE`.
-
-## Redondeo CLP
-
-Si settlement informa que una liquidación proporcional requiere política de redondeo, la UI lo muestra como bloqueo. No redondea por cuenta propia. La regla continúa pendiente en producto mediante `PENDING_ROUNDING_POLICY`.
+- Los countdowns usan timestamps del servidor solo para representación.
+- El navegador no adjudica Auction ni extiende anti-sniping.
+- Recuperar media no reinicia billing por sí solo.
+- Reportar no equivale a culpabilidad y no crea automáticamente un hold financiero.
+- Bloquear es una acción separada del reporte.
+- El video privado no se graba ni se persiste.
+- Si settlement informa que una liquidación proporcional requiere política de redondeo, la UI muestra `PENDING_ROUNDING_POLICY` y no inventa una regla CLP.
