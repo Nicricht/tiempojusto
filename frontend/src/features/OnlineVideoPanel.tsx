@@ -32,7 +32,7 @@ export function OnlineVideoPanel({ sessionId, sessionStatus, onSessionChanged, o
       }
     };
     void beat();
-    const timer = window.setInterval(beat, 2_000);
+    const timer = window.setInterval(beat, 3_000);
     return () => window.clearInterval(timer);
   }, [sessionId, sessionStatus, onReconnectChanged]);
 
