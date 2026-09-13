@@ -53,6 +53,10 @@ jobs:
           TJ_AUTH_JWT_ISSUER: https://issuer.example.test
           TJ_AUTH_JWT_AUDIENCE: tiempojusto-staging
           TJ_AUTH_JWT_JWK_SET_URI: https://issuer.example.test/.well-known/jwks.json
+          TJ_TURN_REALM: staging.example.test
+          TJ_TURN_EXTERNAL_IP: 203.0.113.10
+          TJ_TURN_URLS: turn:staging.example.test:3478?transport=udp
+          TJ_TURN_SHARED_SECRET: ci-turn-key-not-a-secret
           TJ_KYC_PROVIDER: VERIFF
           TJ_PAYMENT_PROVIDER: MERCADO_PAGO
         run: docker compose -f ops/staging/docker-compose.staging.yml config >/tmp/staging-compose.yml
@@ -102,7 +106,7 @@ jobs:
         run: |
           sh ops/db/migrate.sh
           sh ops/db/migrate.sh
-          test "$(psql -Atc 'select count(*) from public.tj_schema_migration')" = "11"
+          test "$(psql -Atc 'select count(*) from public.tj_schema_migration')" = "12"
       - name: Seed restore marker
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
@@ -124,6 +128,7 @@ jobs:
         run: |
           BACKUP=$(find /tmp/tj-backups -name 'tiempojusto-*.dump' | head -1)
           sh ops/db/restore.sh "$BACKUP"
-          psql -d tiempojusto_restore_ci -Atc 'select count(*) from public.tj_schema_migration' | grep -qx '11'
+          psql -d tiempojusto_restore_ci -Atc 'select count(*) from public.tj_schema_migration' | grep -qx '12'
           psql -d tiempojusto_restore_ci -Atc "select count(*) from iam.app_user where public_id = 'restore_probe'" | grep -qx '1'
           psql -d tiempojusto_restore_ci -Atc "select extname from pg_extension where extname = 'postgis'" | grep -qx postgis
+          psql -d tiempojusto_restore_ci -Atc "select count(*) from media.webrtc_signal" | grep -qx '0'
