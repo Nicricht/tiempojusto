@@ -1,0 +1,151 @@
+name: Frontend Golden Path
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/**'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/api/**'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/application/**'
+      - 'database/**'
+      - '.github/workflows/frontend-golden-path.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'frontend/**'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/api/**'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/application/**'
+      - 'database/**'
+      - '.github/workflows/frontend-golden-path.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  browser-golden-path:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_DB: tiempojusto
+          POSTGRES_USER: tiempojusto
+          POSTGRES_PASSWORD: tiempojusto
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tiempojusto -d tiempojusto"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGPASSWORD: tiempojusto
+      TJ_DB_URL: jdbc:postgresql://localhost:5432/tiempojusto
+      TJ_DB_USER: tiempojusto
+      TJ_DB_PASSWORD: tiempojusto
+      TJ_AUTH_DEV_HEADER_ENABLED: 'true'
+      TJ_AUTH_JWT_ENABLED: 'false'
+      SPRING_PROFILES_ACTIVE: ci
+      VITE_TJ_DEV_MODE: 'true'
+      VITE_TJ_API_BASE_URL: ''
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Load schema and migrations
+        run: |
+          set -euo pipefail
+          psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f database/schema/TiempoJusto_PostgreSQL_Schema_V1_0.sql
+          while IFS= read -r f; do
+            echo "Applying $f"
+            psql -h localhost -U tiempojusto -d tiempojusto -v ON_ERROR_STOP=1 -f "$f"
+          done < <(find database/migrations -maxdepth 1 -type f -name 'V*.sql' | sort -V)
+      - name: Build and start backend
+        run: |
+          set -euo pipefail
+          mvn -B -f backend/pom.xml -DskipTests package
+          java -jar backend/app/target/tiempojusto-app-1.0.0.jar >/tmp/tj-golden-backend.log 2>&1 &
+          echo $! >/tmp/tj-golden-backend.pid
+          for i in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8080/actuator/health >/tmp/tj-health.json; then
+              grep -q '"status":"UP"' /tmp/tj-health.json
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/tj-golden-backend.log
+          exit 1
+      - name: Seed two verified users and one open ONLINE Auction
+        run: |
+          set -euo pipefail
+          curl -fsS -X POST http://127.0.0.1:8080/api/v1/sandbox/identity/register \
+            -H 'Content-Type: application/json' \
+            -d '{"role":"HOST","email":"host.frontend.e2e@tiempojusto.test","username":"host_frontend_e2e","displayName":"Host Frontend E2E","publicAge":28,"supportsOnline":true}' >/tmp/tj-host.json
+          HOST_ID=$(python3 -c 'import json; print(json.load(open("/tmp/tj-host.json"))["userId"])')
+          HOST_PROFILE_ID=$(python3 -c 'import json; print(json.load(open("/tmp/tj-host.json"))["hostProfileId"])')
+          curl -fsS -X POST "http://127.0.0.1:8080/api/v1/sandbox/identity/users/$HOST_ID/verify-adult" \
+            -H 'Content-Type: application/json' \
+            -d '{"dateOfBirth":"1998-04-12","legalCountryCode":"CL"}' >/tmp/tj-host-kyc.json
+
+          curl -fsS -X POST http://127.0.0.1:8080/api/v1/sandbox/identity/register \
+            -H 'Content-Type: application/json' \
+            -d '{"role":"BIDDER","email":"bidder.frontend.e2e@tiempojusto.test","username":"bidder_frontend_e2e","displayName":"Bidder Frontend E2E","publicAge":30,"supportsOnline":false}' >/tmp/tj-bidder.json
+          BIDDER_ID=$(python3 -c 'import json; print(json.load(open("/tmp/tj-bidder.json"))["userId"])')
+          curl -fsS -X POST "http://127.0.0.1:8080/api/v1/sandbox/identity/users/$BIDDER_ID/verify-adult" \
+            -H 'Content-Type: application/json' \
+            -d '{"dateOfBirth":"1996-02-20","legalCountryCode":"CL"}' >/tmp/tj-bidder-kyc.json
+          curl -fsS -X POST http://127.0.0.1:8080/api/v1/sandbox/funding/me \
+            -H "X-TJ-Actor-Id: $BIDDER_ID" \
+            -H 'Content-Type: application/json' \
+            -d '{"amountClp":250000}' >/tmp/tj-funding.json
+
+          curl -fsS -X POST http://127.0.0.1:8080/api/v1/sandbox/auctions \
+            -H "X-TJ-Actor-Id: $HOST_ID" \
+            -H 'Content-Type: application/json' \
+            -d "{\"hostProfileId\":\"$HOST_PROFILE_ID\",\"durationMinutes\":30,\"openingAmountClp\":45000,\"closeNowAmountClp\":100000}" >/tmp/tj-auction.json
+
+          echo "TJ_E2E_BIDDER_ID=$BIDDER_ID" >> "$GITHUB_ENV"
+          echo "TJ_E2E_HOST_ID=$HOST_ID" >> "$GITHUB_ENV"
+          echo "TJ_E2E_HOST_NAME=Host Frontend E2E" >> "$GITHUB_ENV"
+      - name: Build frontend and install Chromium
+        working-directory: frontend
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npm install --no-save --no-audit --no-fund playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - name: Start Vite dev server
+        working-directory: frontend
+        run: |
+          npm run dev -- --host 127.0.0.1 >/tmp/tj-golden-frontend.log 2>&1 &
+          echo $! >/tmp/tj-golden-frontend.pid
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:5173/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/tj-golden-frontend.log
+          exit 1
+      - name: Drive bidder Golden Path in Chromium
+        working-directory: frontend
+        env:
+          TJ_FRONTEND_URL: http://127.0.0.1:5173
+        run: node e2e/golden-path-ui.mjs
+      - name: Verify user-facing state persisted correctly
+        run: |
+          set -euo pipefail
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from market.proposal where bidder_user_id='$TJ_E2E_BIDDER_ID'::uuid and status='ACTIVE'")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from appointment.appointment where bidder_user_id='$TJ_E2E_BIDDER_ID'::uuid and modality='ONLINE'")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from safety.report where reporter_user_id='$TJ_E2E_BIDDER_ID'::uuid and reported_user_id='$TJ_E2E_HOST_ID'::uuid and status='OPEN'")" = "1"
+          test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from iam.user_block where blocker_user_id='$TJ_E2E_BIDDER_ID'::uuid and blocked_user_id='$TJ_E2E_HOST_ID'::uuid")" = "1"
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          cat /tmp/tj-golden-backend.log || true
+          cat /tmp/tj-golden-frontend.log || true
