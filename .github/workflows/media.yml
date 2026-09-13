@@ -4,14 +4,22 @@ on:
   pull_request:
     paths:
       - 'backend/media/**'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/application/WebRtcSessionService.java'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/api/WebRtcSessionController.java'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/config/WebRtcProviderConfiguration.java'
       - 'database/migrations/V1_2__webrtc_media.sql'
+      - 'database/migrations/V1_11__webrtc_signaling.sql'
       - 'docs/media/**'
       - '.github/workflows/media.yml'
   push:
     branches: [ main ]
     paths:
       - 'backend/media/**'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/application/WebRtcSessionService.java'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/api/WebRtcSessionController.java'
+      - 'backend/app/src/main/java/cl/tiempojusto/app/config/WebRtcProviderConfiguration.java'
       - 'database/migrations/V1_2__webrtc_media.sql'
+      - 'database/migrations/V1_11__webrtc_signaling.sql'
       - 'docs/media/**'
       - '.github/workflows/media.yml'
 
@@ -33,3 +41,6 @@ jobs:
           grep -q "persistent_recording_enabled = false" database/migrations/V1_2__webrtc_media.sql
           grep -q "reconnect_deadline = media_lost_at + interval '2 minutes'" database/migrations/V1_2__webrtc_media.sql
           grep -q "Online PAID_ACTIVE requires HOST and BIDDER with valid camera/media" database/migrations/V1_2__webrtc_media.sql
+          grep -q "CREATE UNLOGGED TABLE IF NOT EXISTS media.webrtc_signal" database/migrations/V1_11__webrtc_signaling.sql
+          grep -q "interval '2 minutes'" database/migrations/V1_11__webrtc_signaling.sql
+          grep -q "No audiovisual content or TURN credentials" database/migrations/V1_11__webrtc_signaling.sql
