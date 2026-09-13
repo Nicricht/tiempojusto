@@ -3,6 +3,7 @@ package cl.tiempojusto.app.api;
 import cl.tiempojusto.app.application.WebRtcSessionService;
 import cl.tiempojusto.app.security.ActorContext;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,7 +24,9 @@ public class WebRtcSessionController {
     public ResponseEntity<WebRtcSessionService.WebRtcConfig> config(
             HttpServletRequest http,
             @PathVariable UUID sessionId) {
-        return ResponseEntity.ok(webRtc.config(actors.requireActor(http), sessionId));
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(webRtc.config(actors.requireActor(http), sessionId));
     }
 
     @PostMapping("/signals")
@@ -31,7 +34,9 @@ public class WebRtcSessionController {
             HttpServletRequest http,
             @PathVariable UUID sessionId,
             @RequestBody WebRtcSessionService.SignalRequest request) {
-        return ResponseEntity.ok(webRtc.send(actors.requireActor(http), sessionId, request));
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(webRtc.send(actors.requireActor(http), sessionId, request));
     }
 
     @GetMapping("/signals")
@@ -39,6 +44,8 @@ public class WebRtcSessionController {
             HttpServletRequest http,
             @PathVariable UUID sessionId,
             @RequestParam(defaultValue = "0") long after) {
-        return ResponseEntity.ok(webRtc.poll(actors.requireActor(http), sessionId, after));
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore())
+                .body(webRtc.poll(actors.requireActor(http), sessionId, after));
     }
 }
