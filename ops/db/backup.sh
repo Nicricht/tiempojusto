@@ -26,6 +26,7 @@ pg_dump \
     --compress=9 \
     --no-owner \
     --no-acl \
+    --exclude-table-data=media.webrtc_signal \
     --file "$TMP" \
     "$PGDATABASE"
 
