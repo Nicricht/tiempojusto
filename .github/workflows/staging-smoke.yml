@@ -1,0 +1,57 @@
+name: Staging External Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Public staging URL, for example https://staging.example.com'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  edge-and-auth-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require HTTPS
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          case "$BASE_URL" in
+            https://*) ;;
+            *) echo 'base_url must use HTTPS' >&2; exit 2 ;;
+          esac
+      - name: Readiness is public and healthy
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+        run: curl --fail --show-error --silent --retry 3 "$BASE_URL/healthz" | tee /tmp/health.json
+      - name: Protected API rejects anonymous access
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          CODE=$(curl -sS -o /tmp/me.json -w '%{http_code}' "$BASE_URL/api/v1/auth/me")
+          test "$CODE" = "401" || test "$CODE" = "403"
+      - name: Internal and Actuator surfaces are not public
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          for PATHNAME in /actuator/prometheus /internal/payment-sandbox/full-cycle; do
+            CODE=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE_URL$PATHNAME")
+            test "$CODE" = "404"
+          done
+      - name: Security headers exist
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          curl -fsSI "$BASE_URL/" >/tmp/headers.txt
+          grep -qi '^strict-transport-security:' /tmp/headers.txt
+          grep -qi '^x-content-type-options:.*nosniff' /tmp/headers.txt
+          grep -qi '^x-frame-options:.*deny' /tmp/headers.txt
+      - name: Request correlation header is returned by API
+        env:
+          BASE_URL: ${{ inputs.base_url }}
+        run: |
+          curl -sSI -H 'X-Request-Id: staging-smoke-123' "$BASE_URL/api/v1/auth/me" >/tmp/api-headers.txt || true
+          grep -qi '^x-request-id: staging-smoke-123' /tmp/api-headers.txt

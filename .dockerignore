@@ -1,0 +1,16 @@
+.git
+.github
+**/target
+**/node_modules
+frontend/dist
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+backups
+*.dump
+*.sql.gz
+.DS_Store

@@ -21,6 +21,16 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+*.pem
+*.key
+*.p12
+*.jks
+
+# Database backup artifacts
+backups/
+*.dump
+*.dump.sha256
+*.sql.gz
 
 # Logs
 *.log
