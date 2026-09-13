@@ -4,13 +4,14 @@ import cl.tiempojusto.app.application.WebRtcSessionService;
 import cl.tiempojusto.app.security.ActorContext;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/v1/sessions/{sessionId}/online/webrtc")
+@RequestMapping(value = "/api/v1/sessions/{sessionId}/online/webrtc", produces = MediaType.APPLICATION_JSON_VALUE)
 public class WebRtcSessionController {
     private final WebRtcSessionService webRtc;
     private final ActorContext actors;
@@ -29,7 +30,7 @@ public class WebRtcSessionController {
                 .body(webRtc.config(actors.requireActor(http), sessionId));
     }
 
-    @PostMapping("/signals")
+    @PostMapping(value = "/signals", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<WebRtcSessionService.SignalAck> signal(
             HttpServletRequest http,
             @PathVariable UUID sessionId,
