@@ -11,7 +11,7 @@ export type WebRtcHooks = {
   onError?: (error: Error) => void;
 };
 
-const POLL_MS = 250;
+const POLL_MS = 1000;
 const FORCE_RELAY = import.meta.env.VITE_TJ_WEBRTC_FORCE_RELAY === 'true';
 
 export class TiempoJustoWebRtcSession {
