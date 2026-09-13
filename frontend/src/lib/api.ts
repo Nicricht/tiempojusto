@@ -16,6 +16,9 @@ import type {
   ProposalView,
   ReconnectState,
   SessionView,
+  WebRtcConfig,
+  WebRtcSignalBatch,
+  WebRtcSignalInput,
 } from './types';
 
 const API_BASE_URL = (import.meta.env.VITE_TJ_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
@@ -148,6 +151,21 @@ export const tiempoJustoApi = {
     });
   },
 
+  getWebRtcConfig(sessionId: string): Promise<WebRtcConfig> {
+    return request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/online/webrtc/config`);
+  },
+
+  sendWebRtcSignal(sessionId: string, signal: WebRtcSignalInput): Promise<{ sequence: number; expiresAt: string }> {
+    return request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/online/webrtc/signals`, {
+      method: 'POST',
+      ...json(signal),
+    });
+  },
+
+  pollWebRtcSignals(sessionId: string, after: number): Promise<WebRtcSignalBatch> {
+    return request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/online/webrtc/signals?after=${Math.max(0, after)}`);
+  },
+
   acceptPaid(sessionId: string): Promise<SessionView> {
     return request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/paid-consent`, {
       method: 'POST',
@@ -157,7 +175,7 @@ export const tiempoJustoApi = {
   mediaSignal(sessionId: string, mediaFlowing: boolean): Promise<ReconnectState> {
     return request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/online/media-signal`, {
       method: 'POST',
-      ...json({ cameraValid: true, mediaFlowing, audioMuted: false }),
+      ...json({ cameraValid: mediaFlowing, mediaFlowing, audioMuted: false }),
     });
   },
 
