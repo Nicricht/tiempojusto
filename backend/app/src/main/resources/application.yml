@@ -74,6 +74,12 @@ tiempojusto:
       token-uri: ${TJ_AUTH_REFRESH_TOKEN_URI:}
       client-id: ${TJ_AUTH_REFRESH_CLIENT_ID:}
       client-secret: ${TJ_AUTH_REFRESH_CLIENT_SECRET:}
+  media:
+    provider: ${TJ_MEDIA_PROVIDER:MOCK}
+    turn:
+      urls: ${TJ_TURN_URLS:turn:localhost:3478?transport=udp}
+      shared-secret: ${TJ_TURN_SHARED_SECRET:}
+      credential-ttl-seconds: ${TJ_TURN_CREDENTIAL_TTL_SECONDS:600}
   kyc:
     provider: ${TJ_KYC_PROVIDER:}
     callback-url: ${TJ_KYC_CALLBACK_URL:}

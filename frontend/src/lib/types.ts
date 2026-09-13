@@ -117,6 +117,40 @@ export type JoinResult = {
   } | null;
 };
 
+export type WebRtcTurnConfig = {
+  urls: string[];
+  username: string;
+  credential: string;
+  expiresAt: string;
+};
+
+export type WebRtcConfig = {
+  sessionId: string;
+  videoRoomId: string;
+  participantRole: 'HOST' | 'BIDDER';
+  initiator: boolean;
+  persistentRecordingEnabled: boolean;
+  turn: WebRtcTurnConfig;
+};
+
+export type WebRtcSignalInput = {
+  type: 'OFFER' | 'ANSWER' | 'ICE_CANDIDATE' | 'ICE_COMPLETE';
+  sdp?: string | null;
+  candidate?: string | null;
+  sdpMid?: string | null;
+  sdpMLineIndex?: number | null;
+};
+
+export type WebRtcSignal = WebRtcSignalInput & {
+  sequence: number;
+  createdAt: string;
+};
+
+export type WebRtcSignalBatch = {
+  nextAfter: number;
+  signals: WebRtcSignal[];
+};
+
 export type ReconnectState = {
   sessionId?: string;
   sessionStatus?: string;
