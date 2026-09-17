@@ -60,6 +60,27 @@ jobs:
           TJ_KYC_PROVIDER: VERIFF
           TJ_PAYMENT_PROVIDER: MERCADO_PAGO
         run: docker compose -f ops/staging/docker-compose.staging.yml config >/tmp/staging-compose.yml
+      - name: Validate external staging evidence hooks
+        env:
+          TJ_DB_PASSWORD: ci-not-a-secret
+          TJ_STAGING_HOST: staging.example.test
+          TJ_AUTH_JWT_ISSUER: https://issuer.example.test
+          TJ_AUTH_JWT_AUDIENCE: tiempojusto-staging
+          TJ_AUTH_JWT_JWK_SET_URI: https://issuer.example.test/.well-known/jwks.json
+          TJ_TURN_REALM: staging.example.test
+          TJ_TURN_EXTERNAL_IP: 203.0.113.10
+          TJ_TURN_URLS: turn:staging.example.test:3478?transport=udp
+          TJ_TURN_SHARED_SECRET: ci-turn-key-not-a-secret
+          TJ_KYC_PROVIDER: VERIFF
+          TJ_PAYMENT_PROVIDER: MERCADO_PAGO
+          TJ_ALERTMANAGER_CONFIG_PATH: /tmp/tj-alertmanager-external.yml
+          TJ_BACKUP_HOST_DIR: /tmp/tj-backup-offhost
+        run: |
+          cp ops/observability/alertmanager.yml "$TJ_ALERTMANAGER_CONFIG_PATH"
+          mkdir -p "$TJ_BACKUP_HOST_DIR"
+          docker compose -f ops/staging/docker-compose.staging.yml config >/tmp/staging-external-hooks.yml
+          grep -Fq 'source: /tmp/tj-alertmanager-external.yml' /tmp/staging-external-hooks.yml
+          grep -Fq 'source: /tmp/tj-backup-offhost' /tmp/staging-external-hooks.yml
       - name: Validate Prometheus config and alert rules
         run: |
           docker run --rm \

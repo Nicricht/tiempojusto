@@ -173,7 +173,7 @@ services:
       - --config.file=/etc/alertmanager/alertmanager.yml
       - --storage.path=/alertmanager
     volumes:
-      - ../observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ${TJ_ALERTMANAGER_CONFIG_PATH:-../observability/alertmanager.yml}:/etc/alertmanager/alertmanager.yml:ro
       - alertmanager_data:/alertmanager
 
   backup:
@@ -199,7 +199,7 @@ services:
       TJ_BACKUP_INTERVAL_SECONDS: ${TJ_BACKUP_INTERVAL_SECONDS:-21600}
     volumes:
       - ../..:/workspace:ro
-      - backups:/backups
+      - ${TJ_BACKUP_HOST_DIR:-backups}:/backups
     depends_on:
       migrate:
         condition: service_completed_successfully
