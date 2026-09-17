@@ -51,7 +51,8 @@ public class CoreModulesConfiguration {
     }
 
     @Bean
-    @Profile({"default", "dev", "test", "ci"})
+    @Profile({"default", "dev", "test", "ci", "staging"})
+    @ConditionalOnProperty(name = "tiempojusto.media.provider", havingValue = "MOCK", matchIfMissing = true)
     public MockWebRtcPort mockWebRtcPort() {
         return new MockWebRtcPort();
     }
