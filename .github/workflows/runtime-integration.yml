@@ -70,6 +70,9 @@ jobs:
           test "$(psql -h localhost -U tiempojusto -d tiempojusto -Atc "select count(*) from (values ('iam.app_user'),('market.proposal'),('auction.auction'),('appointment.appointment_session'),('finance.ledger_entry'),('finance.payout'),('finance.session_settlement'),('finance.payout_hold'),('geo.route_estimate_snapshot'),('media.video_participant_state')) r(name) where to_regclass(name) is not null")" = "10"
           psql -h localhost -U tiempojusto -d tiempojusto -Atc "select postgis_version();"
 
+      - name: Run Java unit tests
+        run: mvn -B -f backend/pom.xml test
+
       - name: Build all Java modules and integrated Spring Boot app
         run: mvn -B -f backend/pom.xml -DskipTests package
 

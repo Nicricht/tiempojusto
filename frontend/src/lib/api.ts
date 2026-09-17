@@ -30,6 +30,20 @@ const API_BASE_URL = (import.meta.env.VITE_TJ_API_BASE_URL as string | undefined
 const DEV_MODE = import.meta.env.VITE_TJ_DEV_MODE === 'true';
 const ACCESS_TOKEN_KEY = 'tj.accessToken';
 
+export const DEFAULT_API_TIMEOUT_MS = 15_000;
+
+export type TiempoJustoNetworkErrorKind = 'offline' | 'timeout' | 'network';
+
+export class TiempoJustoNetworkError extends Error {
+  readonly kind: TiempoJustoNetworkErrorKind;
+
+  constructor(kind: TiempoJustoNetworkErrorKind, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'TiempoJustoNetworkError';
+    this.kind = kind;
+  }
+}
+
 export class TiempoJustoApiError extends Error {
   readonly status: number;
   readonly problem: ApiProblem | null;
@@ -65,23 +79,56 @@ function buildHeaders(extra?: HeadersInit): Headers {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: buildHeaders(init.headers),
-  });
-
-  if (!response.ok) {
-    let problem: ApiProblem | null = null;
-    try {
-      problem = (await response.json()) as ApiProblem;
-    } catch {
-      problem = null;
-    }
-    throw new TiempoJustoApiError(response.status, problem, `HTTP ${response.status}`);
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    throw new TiempoJustoNetworkError('offline', 'Sin conexión. Revisa tu red e inténtalo nuevamente.');
   }
 
-  if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  const controller = new AbortController();
+  let timedOut = false;
+  const externalSignal = init.signal;
+  const abortFromExternalSignal = () => controller.abort(externalSignal?.reason);
+
+  if (externalSignal?.aborted) abortFromExternalSignal();
+  else externalSignal?.addEventListener('abort', abortFromExternalSignal, { once: true });
+
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort(new DOMException('TiempoJusto API request timed out', 'TimeoutError'));
+  }, DEFAULT_API_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      signal: controller.signal,
+      headers: buildHeaders(init.headers),
+    });
+
+    if (!response.ok) {
+      let problem: ApiProblem | null = null;
+      try {
+        problem = (await response.json()) as ApiProblem;
+      } catch {
+        problem = null;
+      }
+      throw new TiempoJustoApiError(response.status, problem, `HTTP ${response.status}`);
+    }
+
+    if (response.status === 204) return undefined as T;
+    return (await response.json()) as T;
+  } catch (cause) {
+    if (cause instanceof TiempoJustoApiError) throw cause;
+    if (timedOut) {
+      throw new TiempoJustoNetworkError('timeout', 'La solicitud tardó demasiado. Inténtalo nuevamente.', { cause });
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      throw new TiempoJustoNetworkError('offline', 'Sin conexión. Revisa tu red e inténtalo nuevamente.', { cause });
+    }
+    if (externalSignal?.aborted) throw cause;
+    throw new TiempoJustoNetworkError('network', 'No se pudo contactar al servicio. Inténtalo nuevamente.', { cause });
+  } finally {
+    window.clearTimeout(timeout);
+    externalSignal?.removeEventListener('abort', abortFromExternalSignal);
+  }
 }
 
 function json(body: unknown): RequestInit {

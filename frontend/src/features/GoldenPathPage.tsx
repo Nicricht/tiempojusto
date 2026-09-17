@@ -26,11 +26,13 @@ export default function GoldenPathPage() {
   const [me, setMe] = useState<AuthMe | null>(null);
   const [kyc, setKyc] = useState<KycStatusResult | null>(null);
   const [hosts, setHosts] = useState<ProfileView[]>([]);
+  const [discoveryLoaded, setDiscoveryLoaded] = useState(false);
   const [host, setHost] = useState<ProfileView | null>(null);
   const [proposal, setProposal] = useState<ProposalView | null>(null);
   const [proposalAmount, setProposalAmount] = useState('60000');
   const [duration, setDuration] = useState(30);
   const [auctions, setAuctions] = useState<AuctionView[]>([]);
+  const [auctionsLoaded, setAuctionsLoaded] = useState(false);
   const [auction, setAuction] = useState<AuctionView | null>(null);
   const [bidAmount, setBidAmount] = useState('');
   const [appointmentId, setAppointmentId] = useState(() => localStorage.getItem('tj.appointmentId') ?? '');
@@ -43,9 +45,25 @@ export default function GoldenPathPage() {
   const [report, setReport] = useState<SafetyReportResult | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const [online, setOnline] = useState(() => navigator.onLine);
+  const [error, setError] = useState(() => {
+    const oidcError = sessionStorage.getItem('tj.oidc.error') ?? '';
+    if (oidcError) sessionStorage.removeItem('tj.oidc.error');
+    return oidcError;
+  });
 
   useEffect(() => { void loadIdentity(); }, []);
+
+  useEffect(() => {
+    const markOnline = () => setOnline(true);
+    const markOffline = () => setOnline(false);
+    window.addEventListener('online', markOnline);
+    window.addEventListener('offline', markOffline);
+    return () => {
+      window.removeEventListener('online', markOnline);
+      window.removeEventListener('offline', markOffline);
+    };
+  }, []);
 
   async function run<T>(operation: () => Promise<T>, done?: (value: T) => void): Promise<T | null> {
     setBusy(true);
@@ -100,7 +118,11 @@ export default function GoldenPathPage() {
     setMe(null);
     setKyc(null);
     setHosts([]);
+    setDiscoveryLoaded(false);
     setHost(null);
+    setAuctions([]);
+    setAuctionsLoaded(false);
+    setAuction(null);
   }
 
   async function startKyc(): Promise<void> {
@@ -110,7 +132,10 @@ export default function GoldenPathPage() {
 
   async function discover(): Promise<void> {
     const page = await run(() => tiempoJustoApi.discoverOnline(30));
-    if (page) setHosts(page.items);
+    if (page) {
+      setHosts(page.items);
+      setDiscoveryLoaded(true);
+    }
   }
 
   async function selectHost(next: ProfileView): Promise<void> {
@@ -136,7 +161,10 @@ export default function GoldenPathPage() {
 
   async function loadAuctions(): Promise<void> {
     const page = await run(() => tiempoJustoApi.listAuctions(30));
-    if (page) setAuctions(page.items);
+    if (page) {
+      setAuctions(page.items);
+      setAuctionsLoaded(true);
+    }
   }
 
   function selectAuction(next: AuctionView): void {
@@ -241,7 +269,7 @@ export default function GoldenPathPage() {
   const kycOk = kyc?.status === 'VERIFIED' && kyc.verifiedAdult;
 
   return (
-    <main className="page">
+    <main className="page" aria-busy={busy}>
       <section className="page-heading row-heading">
         <div>
           <span className="status status-ok">Golden Path ONLINE</span>
@@ -251,14 +279,16 @@ export default function GoldenPathPage() {
         {me ? <button className="button button-secondary" onClick={logout}>Cerrar sesión</button> : null}
       </section>
 
+      {busy && <div className="success-card" role="status" aria-live="polite">Procesando solicitud…</div>}
+      {!online && <div className="error-banner" role="alert">Sin conexión. Las acciones se reanudarán cuando recuperes Internet.</div>}
       {error && <div className="error-banner" role="alert">{error}</div>}
 
       <section className="panel">
         <h2>1. Acceso y KYC</h2>
         {!me ? (
           <div className="action-grid">
-            <button className="button button-primary" disabled={busy || !oidc.configured} onClick={login}>Iniciar sesión con OIDC</button>
-            <button className="button button-secondary" disabled={busy} onClick={loadIdentity}>Reintentar identidad</button>
+            <button className="button button-primary" disabled={busy || !online || !oidc.configured} onClick={login}>Iniciar sesión con OIDC</button>
+            <button className="button button-secondary" disabled={busy || !online} onClick={loadIdentity}>Reintentar identidad</button>
             {!oidc.configured && !tiempoJustoApi.devMode && <p className="hint">Este entorno aún no tiene endpoints OIDC configurados.</p>}
             {tiempoJustoApi.devMode && <p className="hint">En desarrollo también puedes usar el Actor UUID del panel Core.</p>}
           </div>
@@ -270,13 +300,13 @@ export default function GoldenPathPage() {
             <div><small>KYC</small><strong>{kycOk ? 'VERIFIED 18+' : kyc?.status ?? 'NOT_STARTED'}</strong></div>
           </div>
         )}
-        {me && !kycOk && <button className="button button-primary" disabled={busy} onClick={startKyc}>Iniciar verificación KYC</button>}
+        {me && !kycOk && <button className="button button-primary" disabled={busy || !online} onClick={startKyc}>Iniciar verificación KYC</button>}
       </section>
 
       <section className="panel">
         <div className="row-heading">
           <div><h2>2. Discovery y perfil HOST</h2><p className="hint">Solo perfiles ONLINE activos y no bloqueados.</p></div>
-          <button className="button button-secondary" disabled={busy || !me} onClick={discover}>Buscar HOSTS</button>
+          <button className="button button-secondary" disabled={busy || !online || !me} onClick={discover}>Buscar HOSTS</button>
         </div>
         <div className="feature-grid">
           {hosts.map((item) => (
@@ -287,7 +317,8 @@ export default function GoldenPathPage() {
               <small>{item.bio || 'Perfil sin descripción pública.'}</small>
             </button>
           ))}
-          {hosts.length === 0 && <p className="hint">Carga Discovery para ver perfiles disponibles.</p>}
+          {!discoveryLoaded && hosts.length === 0 && <p className="hint">Carga Discovery para ver perfiles disponibles.</p>}
+          {discoveryLoaded && hosts.length === 0 && <p className="hint">No hay HOSTS ONLINE disponibles.</p>}
         </div>
       </section>
 
@@ -297,13 +328,13 @@ export default function GoldenPathPage() {
           <p>{host ? `HOST seleccionado: ${host.displayName}` : 'Selecciona un HOST en Discovery.'}</p>
           <label className="field">Monto CLP<input value={proposalAmount} inputMode="numeric" onChange={(e) => setProposalAmount(e.target.value.replace(/\D/g, ''))} /></label>
           <label className="field">Duración<select value={duration} onChange={(e) => setDuration(Number(e.target.value))}><option value={15}>15 min</option><option value={30}>30 min</option><option value={60}>60 min</option></select></label>
-          <button className="button button-primary full" disabled={busy || !host || !kycOk} onClick={createProposal}>Crear Proposal</button>
+          <button className="button button-primary full" disabled={busy || !online || !host || !kycOk} onClick={createProposal}>Crear Proposal</button>
           {proposal && <p className="success-card">Proposal {proposal.status} · {money.format(proposal.amountClp)}</p>}
         </article>
 
         <article className="panel">
           <h2>4. Auction</h2>
-          <button className="button button-secondary full" disabled={busy || !me} onClick={loadAuctions}>Cargar Auctions ONLINE abiertas</button>
+          <button className="button button-secondary full" disabled={busy || !online || !me} onClick={loadAuctions}>Cargar Auctions ONLINE abiertas</button>
           <div className="compact-list">
             {auctions.map((item) => (
               <button key={item.id} className="list-card" onClick={() => selectAuction(item)}>
@@ -312,11 +343,12 @@ export default function GoldenPathPage() {
               </button>
             ))}
           </div>
+          {auctionsLoaded && auctions.length === 0 && <p className="hint">No hay Auctions ONLINE abiertas.</p>}
           {auction && <>
             <label className="field">Bid CLP<input value={bidAmount} inputMode="numeric" onChange={(e) => setBidAmount(e.target.value.replace(/\D/g, ''))} /></label>
             <div className="action-grid">
-              <button className="button button-primary" disabled={busy} onClick={bid}>Pujar</button>
-              <button className="button button-secondary" disabled={busy || auction.closeNowAmountClp == null} onClick={closeNow}>Ganar Ahora{auction.closeNowAmountClp ? ` · ${money.format(auction.closeNowAmountClp)}` : ''}</button>
+              <button className="button button-primary" disabled={busy || !online} onClick={bid}>Pujar</button>
+              <button className="button button-secondary" disabled={busy || !online || auction.closeNowAmountClp == null} onClick={closeNow}>Ganar Ahora{auction.closeNowAmountClp ? ` · ${money.format(auction.closeNowAmountClp)}` : ''}</button>
             </div>
           </>}
         </article>
@@ -325,8 +357,8 @@ export default function GoldenPathPage() {
       <section className="panel">
         <h2>5. Winner y Session ONLINE</h2>
         <div className="action-grid">
-          <button className="button button-primary" disabled={busy || !appointmentId} onClick={confirmWinner}>Confirmar Winner</button>
-          <button className="button button-secondary" disabled={busy || !sessionId} onClick={refreshSession}>Actualizar Session</button>
+          <button className="button button-primary" disabled={busy || !online || !appointmentId} onClick={confirmWinner}>Confirmar Winner</button>
+          <button className="button button-secondary" disabled={busy || !online || !sessionId} onClick={refreshSession}>Actualizar Session</button>
         </div>
         {session && <>
           <div className="data-strip">
@@ -337,10 +369,10 @@ export default function GoldenPathPage() {
           </div>
           <OnlineVideoPanel sessionId={session.id} sessionStatus={session.status} onSessionChanged={setSession} onReconnectChanged={setReconnect} />
           <div className="action-grid">
-            <button className="button button-primary" disabled={busy} onClick={acceptPaid}>Aceptar periodo pagado</button>
-            <button className="button button-secondary" disabled={busy} onClick={refreshReconnect}>Ver reconnect</button>
-            <button className="button button-secondary" disabled={busy} onClick={acceptResume}>Aceptar reanudación</button>
-            <button className="button button-danger" disabled={busy} onClick={finishSession}>Finalizar</button>
+            <button className="button button-primary" disabled={busy || !online} onClick={acceptPaid}>Aceptar periodo pagado</button>
+            <button className="button button-secondary" disabled={busy || !online} onClick={refreshReconnect}>Ver reconnect</button>
+            <button className="button button-secondary" disabled={busy || !online} onClick={acceptResume}>Aceptar reanudación</button>
+            <button className="button button-danger" disabled={busy || !online} onClick={finishSession}>Finalizar</button>
           </div>
           {reconnect && <pre className="code-block">{JSON.stringify(reconnect, null, 2)}</pre>}
           {finish?.proportionalSettlementNeedsRoundingPolicy && <div className="error-banner">PENDING_ROUNDING_POLICY: no se inventa redondeo CLP.</div>}
@@ -350,7 +382,7 @@ export default function GoldenPathPage() {
       <section className="two-column">
         <article className="panel">
           <h2>6. Wallet</h2>
-          <button className="button button-primary full" disabled={busy || !me} onClick={loadBalance}>Actualizar Wallet</button>
+          <button className="button button-primary full" disabled={busy || !online || !me} onClick={loadBalance}>Actualizar Wallet</button>
           {balance && <div className="data-strip"><div><small>Pending</small><strong>{money.format(balance.pendingClp)}</strong></div><div><small>Available</small><strong>{money.format(balance.availableClp)}</strong></div><div><small>Review</small><strong>{money.format(balance.heldForReviewClp)}</strong></div></div>}
         </article>
 
@@ -359,8 +391,8 @@ export default function GoldenPathPage() {
           <p className="hint"><strong>Reportar y bloquear son acciones distintas.</strong> Un reporte no prueba culpabilidad ni crea un hold financiero por sí solo.</p>
           <label className="field">Descripción del reporte<textarea value={reportDescription} onChange={(e) => setReportDescription(e.target.value)} placeholder="Describe el incidente" /></label>
           <div className="action-grid">
-            <button className="button button-danger" disabled={busy || !host} onClick={createReport}>Reportar</button>
-            <button className="button button-secondary" disabled={busy || !host} onClick={toggleBlock}>{blocked ? 'Desbloquear' : 'Bloquear'}</button>
+            <button className="button button-danger" disabled={busy || !online || !host} onClick={createReport}>Reportar</button>
+            <button className="button button-secondary" disabled={busy || !online || !host} onClick={toggleBlock}>{blocked ? 'Desbloquear' : 'Bloquear'}</button>
           </div>
           {report && <p className="success-card">Reporte creado · {report.status}</p>}
         </article>

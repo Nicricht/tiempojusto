@@ -31,6 +31,13 @@ jobs:
         working-directory: frontend
         run: npm install --no-audit --no-fund
 
+      - name: Component and unit tests
+        working-directory: frontend
+        env:
+          VITE_TJ_DEV_MODE: 'false'
+          VITE_TJ_API_BASE_URL: ''
+        run: npm test
+
       - name: Typecheck and build
         working-directory: frontend
         env:
