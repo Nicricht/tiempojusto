@@ -78,6 +78,11 @@ jobs:
           TJ_AUTH_JWT_ISSUER: https://issuer.example.test
           TJ_AUTH_JWT_AUDIENCE: tiempojusto-staging
           TJ_AUTH_JWT_JWK_SET_URI: https://issuer.example.test/.well-known/jwks.json
+          VITE_TJ_OIDC_AUTHORIZATION_ENDPOINT: https://issuer.example.test/authorize
+          VITE_TJ_OIDC_TOKEN_ENDPOINT: https://issuer.example.test/token
+          VITE_TJ_OIDC_CLIENT_ID: tiempojusto-web
+          VITE_TJ_OIDC_SCOPE: openid profile
+          VITE_TJ_OIDC_REDIRECT_URI: https://staging.example.test/
           TJ_TURN_REALM: staging.example.test
           TJ_TURN_EXTERNAL_IP: 203.0.113.10
           TJ_TURN_URLS: turn:staging.example.test:3478?transport=udp
