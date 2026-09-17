@@ -40,7 +40,7 @@ public class CoreModulesConfiguration {
     }
 
     @Bean
-    @Profile({"default", "dev", "test", "ci"})
+    @Profile({"default", "dev", "test", "ci", "staging"})
     public MockRoutingPort mockRoutingPort() {
         return new MockRoutingPort();
     }
