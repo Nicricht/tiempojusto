@@ -48,9 +48,29 @@ public class DatabaseSchemaVerifier implements ApplicationRunner {
         }
 
         String databaseName = jdbc.queryForObject("select current_database()", String.class);
+        String databaseUser = jdbc.queryForObject("select current_user", String.class);
+        String serverAddress = jdbc.queryForObject("select inet_server_addr()::text", String.class);
+        Integer serverPort = jdbc.queryForObject("select inet_server_port()", Integer.class);
+
         if (databaseName == null || databaseName.isBlank()) {
             throw new IllegalStateException("Unable to identify connected PostgreSQL database");
         }
-        LOG.info("Verified TiempoJusto database schema on database={}", databaseName);
+        if (databaseUser == null || databaseUser.isBlank()) {
+            throw new IllegalStateException("Unable to identify connected PostgreSQL user");
+        }
+        if (serverAddress == null || serverAddress.isBlank()) {
+            throw new IllegalStateException("Unable to identify connected PostgreSQL server address");
+        }
+        if (serverPort == null || serverPort <= 0) {
+            throw new IllegalStateException("Unable to identify connected PostgreSQL server port");
+        }
+
+        LOG.info(
+                "Verified TiempoJusto database schema on database={} user={} server={}:{}",
+                databaseName,
+                databaseUser,
+                serverAddress,
+                serverPort
+        );
     }
 }
