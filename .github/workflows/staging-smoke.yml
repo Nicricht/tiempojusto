@@ -7,6 +7,14 @@ on:
         description: 'Public staging URL, for example https://staging.example.com'
         required: true
         type: string
+      oidc_discovery_url:
+        description: 'Public OIDC discovery URL, for example https://issuer.example.com/.well-known/openid-configuration'
+        required: true
+        type: string
+      oidc_expected_issuer:
+        description: 'Exact HTTPS issuer expected by the backend JWT configuration'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -15,6 +23,7 @@ jobs:
   edge-and-auth-boundary:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
       - name: Require HTTPS
         env:
           BASE_URL: ${{ inputs.base_url }}
@@ -23,6 +32,11 @@ jobs:
             https://*) ;;
             *) echo 'base_url must use HTTPS' >&2; exit 2 ;;
           esac
+      - name: Verify public OIDC discovery and JWKS
+        env:
+          OIDC_DISCOVERY_URL: ${{ inputs.oidc_discovery_url }}
+          OIDC_EXPECTED_ISSUER: ${{ inputs.oidc_expected_issuer }}
+        run: python3 ops/staging/verify_oidc_public.py "$OIDC_DISCOVERY_URL" "$OIDC_EXPECTED_ISSUER"
       - name: Readiness is public and healthy
         env:
           BASE_URL: ${{ inputs.base_url }}
