@@ -3,6 +3,7 @@ package cl.tiempojusto.app.security;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -22,6 +23,17 @@ class ApiRateLimitFilterTest {
     @AfterEach
     void clearSecurityContext() {
         SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    void springCanConstructEnabledRateLimitFilter() {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(SimpleMeterRegistry.class, SimpleMeterRegistry::new);
+            context.register(ApiRateLimitFilter.class);
+            context.refresh();
+
+            assertNotNull(context.getBean(ApiRateLimitFilter.class));
+        }
     }
 
     @Test
