@@ -10,7 +10,7 @@ El stack reproducible vive en `ops/staging/docker-compose.staging.yml`. El gatew
 
 ## 2. Variables obligatorias fuera del repositorio
 
-Configurar en el secret store del host/orquestador, nunca en commits, `VITE_*`, logs o tickets públicos:
+Separar siempre secretos de configuración pública del navegador. Los secretos se configuran en el secret store del host/orquestador y nunca se guardan en commits, variables `VITE_*`, logs o tickets públicos:
 
 - `TJ_STAGING_HOST`
 - `TJ_DB_PASSWORD`
@@ -28,6 +28,16 @@ Configurar en el secret store del host/orquestador, nunca en commits, `VITE_*`, 
 - secretos de firma de webhooks KYC/Payment
 - `TJ_PAYMENT_SANDBOX_PROBE_KEY` solo si se habilita el probe interno
 - configuración secreta del canal real de alertas
+
+La SPA necesita además configuración OIDC pública durante el build del frontend:
+
+- `VITE_TJ_OIDC_AUTHORIZATION_ENDPOINT`
+- `VITE_TJ_OIDC_TOKEN_ENDPOINT`
+- `VITE_TJ_OIDC_CLIENT_ID`
+- `VITE_TJ_OIDC_SCOPE`, default `openid profile`
+- `VITE_TJ_OIDC_REDIRECT_URI`
+
+Esos cinco valores son públicos por diseño y quedan compilados en el bundle Vite. Nunca usar `VITE_*` para un client secret, refresh token, API key o cualquier otra credencial. Si cambia el proveedor, client id, redirect URI o endpoints OIDC, reconstruir la imagen frontend antes de desplegarla.
 
 Para `TJ_KYC_PROVIDER=VERIFF`, staging requiere fuera de Git `TJ_KYC_VERIFF_BASE_URL`, `TJ_KYC_VERIFF_API_KEY` y `TJ_KYC_VERIFF_SHARED_SECRET`.
 
@@ -102,7 +112,7 @@ El limiter dentro del backend es defensivo y por instancia. En una futura topolo
 
 La API usa `Authorization: Bearer` y `SessionCreationPolicy.STATELESS`; no usa cookie de sesión del backend. Por eso CSRF está deshabilitado en esta frontera. CORS usa una lista exacta `TJ_CORS_ALLOWED_ORIGINS`; no se habilita wildcard ni credentials. En el staging mismo-origen la lista debe ser `https://$TJ_STAGING_HOST`.
 
-JWT productivo/staging exige issuer, audience y JWKS. HMAC queda restringido a `ci/dev/test` por el runtime existente.
+JWT productivo/staging exige issuer, audience y JWKS. HMAC queda restringido a `ci/dev/test` por el runtime existente. La SPA ejecuta Authorization Code + PKCE S256 con los valores públicos `VITE_TJ_OIDC_*`; la API sigue validando issuer, audience y firma contra JWKS y no confía en decisiones de autenticación tomadas por el navegador.
 
 ## 9. Backups
 
@@ -161,7 +171,7 @@ Después del rollback ejecutar: auth, consulta Auction, consulta Session, webhoo
 
 ## 13. Gate externo pendiente
 
-Este repositorio puede demostrar build, migración V1.0...V1.11, health, métricas, alert rules, rate limiting, scanning, backup/restore, frontend Golden Path, TURN relay CI, refresh de credenciales TURN y seams para inyectar Alertmanager externo y almacenamiento de backup externo. #27 solo puede cerrarse cuando exista evidencia externa de:
+Este repositorio puede demostrar build, plumbing de configuración pública OIDC hacia el bundle frontend, migración V1.0...V1.11, health, métricas, alert rules, rate limiting, scanning, backup/restore, frontend Golden Path, TURN relay CI, refresh de credenciales TURN y seams para inyectar Alertmanager externo y almacenamiento de backup externo. #27 solo puede cerrarse cuando exista evidencia externa de:
 
 - host + DNS HTTPS real;
 - OAuth/OIDC sandbox real con JWKS;
