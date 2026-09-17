@@ -33,6 +33,11 @@ Para `TJ_KYC_PROVIDER=VERIFF`, staging requiere fuera de Git `TJ_KYC_VERIFF_BASE
 
 Para `TJ_PAYMENT_PROVIDER=MERCADO_PAGO`, staging requiere fuera de Git `TJ_PAYMENT_MP_ACCESS_TOKEN` y `TJ_PAYMENT_MP_WEBHOOK_SECRET`; `TJ_PAYMENT_MP_BASE_URL` conserva el endpoint configurado para el sandbox/proveedor correspondiente.
 
+El Compose admite dos hooks operativos opcionales para evidencia externa sin guardar secretos en Git:
+
+- `TJ_ALERTMANAGER_CONFIG_PATH` puede apuntar a un archivo generado fuera del repositorio con el receiver real. Si se omite, usa `ops/observability/alertmanager.yml`.
+- `TJ_BACKUP_HOST_DIR` puede apuntar a un directorio del host respaldado por almacenamiento externo o un filesystem remoto ya montado. Si se omite, usa el volumen Docker local `backups`, que no cuenta como evidencia off-host.
+
 En staging `TJ_AUTH_DEV_HEADER_ENABLED=false`, `TJ_AUTH_JWT_ENABLED=true`, `TJ_RATE_LIMIT_ENABLED=true`, `TJ_MEDIA_PROVIDER=COTURN` y `TJ_ENVIRONMENT=staging` son obligatorios. `TJ_WEBRTC_FORCE_RELAY=true` puede usarse durante la prueba de infraestructura para demostrar que el tráfico cruza TURN, pero no cambia reglas de Session ni billing.
 
 ## 3. DNS, HTTPS y TURN
@@ -78,7 +83,7 @@ Prometheus recoge métricas de dominio de baja cardinalidad para `auth`, `auctio
 
 También existen contadores de settlement y liberación de payout. `ops/observability/alerts.yml` cubre backend caído, ratio 5xx, fallos Auth/Auction/Session, webhooks KYC/Payment rechazados, retries de settlement/payout y ráfagas de rate limiting.
 
-El repositorio contiene un Alertmanager base sin destino externo. Antes de declarar alert delivery probado, el despliegue debe inyectar mediante secret/config externa un receiver real y ejecutar una alerta de prueba. No colocar webhook URLs, tokens o credenciales del receiver dentro del repositorio.
+El repositorio contiene un Alertmanager base sin destino externo. Antes de declarar alert delivery probado, el despliegue debe crear fuera de Git una configuración con el receiver aprobado, establecer `TJ_ALERTMANAGER_CONFIG_PATH` hacia ese archivo y ejecutar una alerta de prueba. No colocar webhook URLs, tokens o credenciales del receiver dentro del repositorio.
 
 ## 7. Rate limiting
 
@@ -113,7 +118,7 @@ Cada backup:
 - aplica permisos restrictivos al artefacto;
 - no preserva contenido efímero del mailbox `media.webrtc_signal`.
 
-La ubicación del volumen/objeto debe tener cifrado at-rest y política de acceso separada del runtime. Para un piloto real, copiar además los backups a almacenamiento externo al host de staging. El gate de #27 exige demostrar esa separación y un restore desde el artefacto externo; un volumen local de Docker no cuenta como prueba off-host.
+Por defecto `/backups` usa el volumen Docker local `backups`. Para el piloto real se debe establecer `TJ_BACKUP_HOST_DIR` hacia un directorio cuyo failure domain sea externo al host de staging, por ejemplo un filesystem remoto ya montado o una ruta sincronizada por infraestructura externa. La evidencia debe demostrar copia off-host y un restore desde ese artefacto; un bind mount a otro directorio del mismo disco tampoco cuenta como prueba off-host.
 
 ## 10. Restore
 
@@ -156,7 +161,7 @@ Después del rollback ejecutar: auth, consulta Auction, consulta Session, webhoo
 
 ## 13. Gate externo pendiente
 
-Este repositorio puede demostrar build, migración V1.0...V1.11, health, métricas, alert rules, rate limiting, scanning, backup/restore, frontend Golden Path, TURN relay CI y refresh de credenciales TURN. #27 solo puede cerrarse cuando exista evidencia externa de:
+Este repositorio puede demostrar build, migración V1.0...V1.11, health, métricas, alert rules, rate limiting, scanning, backup/restore, frontend Golden Path, TURN relay CI, refresh de credenciales TURN y seams para inyectar Alertmanager externo y almacenamiento de backup externo. #27 solo puede cerrarse cuando exista evidencia externa de:
 
 - host + DNS HTTPS real;
 - OAuth/OIDC sandbox real con JWKS;
