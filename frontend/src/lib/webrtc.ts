@@ -1,5 +1,5 @@
 import { tiempoJustoApi } from './api';
-import type { WebRtcSignal } from './types';
+import type { WebRtcConfig, WebRtcSignal } from './types';
 
 export type WebRtcState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'failed' | 'closed';
 
@@ -12,13 +12,23 @@ export type WebRtcHooks = {
 };
 
 const POLL_MS = 1000;
+const TURN_REFRESH_SKEW_MS = 60_000;
+const TURN_REFRESH_RETRY_MS = 5_000;
 const FORCE_RELAY = import.meta.env.VITE_TJ_WEBRTC_FORCE_RELAY === 'true';
+
+function peerConfiguration(config: WebRtcConfig): RTCConfiguration {
+  return {
+    iceServers: [{ urls: config.turn.urls, username: config.turn.username, credential: config.turn.credential }],
+    iceTransportPolicy: FORCE_RELAY ? 'relay' : 'all',
+  };
+}
 
 export class TiempoJustoWebRtcSession {
   private peer: RTCPeerConnection | null = null;
   private local: MediaStream | null = null;
   private remote: MediaStream | null = null;
   private timer: number | null = null;
+  private turnRefreshTimer: number | null = null;
   private after = 0;
   private closed = false;
   private pendingIce: RTCIceCandidateInit[] = [];
@@ -34,10 +44,8 @@ export class TiempoJustoWebRtcSession {
     if (!camera || camera.readyState !== 'live') throw new Error('La cámara es obligatoria para entrar.');
     this.hooks.onLocalStream?.(this.local);
 
-    this.peer = new RTCPeerConnection({
-      iceServers: [{ urls: config.turn.urls, username: config.turn.username, credential: config.turn.credential }],
-      iceTransportPolicy: FORCE_RELAY ? 'relay' : 'all',
-    });
+    this.peer = new RTCPeerConnection(peerConfiguration(config));
+    this.scheduleTurnRefresh(config.turn.expiresAt);
     this.remote = new MediaStream();
     this.hooks.onRemoteStream?.(this.remote);
     this.hooks.onState?.('connecting');
@@ -93,6 +101,7 @@ export class TiempoJustoWebRtcSession {
   async close(): Promise<void> {
     this.closed = true;
     if (this.timer != null) window.clearTimeout(this.timer);
+    if (this.turnRefreshTimer != null) window.clearTimeout(this.turnRefreshTimer);
     this.peer?.close();
     this.local?.getTracks().forEach((track) => track.stop());
     this.remote?.getTracks().forEach((track) => track.stop());
@@ -103,6 +112,31 @@ export class TiempoJustoWebRtcSession {
     this.hooks.onRemoteStream?.(null);
     this.hooks.onMediaHealth?.(false);
     this.hooks.onState?.('closed');
+  }
+
+  private scheduleTurnRefresh(expiresAt: string): void {
+    if (this.closed) return;
+    if (this.turnRefreshTimer != null) window.clearTimeout(this.turnRefreshTimer);
+    const expiryMs = Date.parse(expiresAt);
+    const delay = Number.isFinite(expiryMs)
+      ? Math.max(1_000, expiryMs - Date.now() - TURN_REFRESH_SKEW_MS)
+      : TURN_REFRESH_RETRY_MS;
+    this.turnRefreshTimer = window.setTimeout(() => void this.refreshTurnCredentials(), delay);
+  }
+
+  private async refreshTurnCredentials(): Promise<void> {
+    if (this.closed || !this.peer) return;
+    try {
+      const config = await tiempoJustoApi.getWebRtcConfig(this.sessionId);
+      if (config.persistentRecordingEnabled) throw new Error('ONLINE privado no permite grabación persistente.');
+      this.peer.setConfiguration(peerConfiguration(config));
+      this.scheduleTurnRefresh(config.turn.expiresAt);
+    } catch (cause) {
+      this.report(cause);
+      if (!this.closed) {
+        this.turnRefreshTimer = window.setTimeout(() => void this.refreshTurnCredentials(), TURN_REFRESH_RETRY_MS);
+      }
+    }
   }
 
   private poll(): void {
