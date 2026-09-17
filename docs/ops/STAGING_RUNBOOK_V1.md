@@ -4,9 +4,9 @@ Fuente funcional: Documento Maestro V1.7. Este runbook no agrega reglas de negoc
 
 ## 1. Objetivo
 
-El staging debe reproducir la frontera operativa del MVP ONLINE con HTTPS, frontend, backend, PostgreSQL/PostGIS, autenticación JWT/OIDC, proveedores sandbox, migraciones controladas, observabilidad, backups y restore. Ningún secreto se guarda en Git.
+El staging debe reproducir la frontera operativa del MVP ONLINE con HTTPS, frontend, backend, PostgreSQL/PostGIS, autenticación JWT/OIDC, proveedores sandbox, WebRTC/TURN, migraciones controladas, observabilidad, backups y restore. Ningún secreto se guarda en Git.
 
-El stack reproducible vive en `ops/staging/docker-compose.staging.yml`. Solo el gateway Caddy publica puertos 80/443. PostgreSQL, backend, management/Prometheus, Alertmanager y backups permanecen en la red privada del stack.
+El stack reproducible vive en `ops/staging/docker-compose.staging.yml`. El gateway Caddy publica 80/443 y coturn publica 3478 TCP/UDP más el rango UDP 49160-49200 requerido para relay. PostgreSQL, backend, management/Prometheus, Alertmanager y backups permanecen fuera de la exposición HTTP pública.
 
 ## 2. Variables obligatorias fuera del repositorio
 
@@ -18,27 +18,38 @@ Configurar en el secret store del host/orquestador, nunca en commits, `VITE_*`, 
 - `TJ_AUTH_JWT_AUDIENCE`
 - `TJ_AUTH_JWT_JWK_SET_URI`
 - credenciales OAuth refresh si se habilita refresh
+- `TJ_TURN_REALM`
+- `TJ_TURN_EXTERNAL_IP`
+- `TJ_TURN_URLS`
+- `TJ_TURN_SHARED_SECRET`
+- `TJ_TURN_CREDENTIAL_TTL_SECONDS` si se cambia el default de 600 s
 - `TJ_KYC_PROVIDER` y credenciales sandbox del proveedor
 - `TJ_PAYMENT_PROVIDER` y credenciales sandbox del proveedor
 - secretos de firma de webhooks KYC/Payment
 - `TJ_PAYMENT_SANDBOX_PROBE_KEY` solo si se habilita el probe interno
 - configuración secreta del canal real de alertas
 
-En staging `TJ_AUTH_DEV_HEADER_ENABLED=false`, `TJ_AUTH_JWT_ENABLED=true`, `TJ_RATE_LIMIT_ENABLED=true` y `TJ_ENVIRONMENT=staging` son obligatorios.
+Para `TJ_KYC_PROVIDER=VERIFF`, staging requiere fuera de Git `TJ_KYC_VERIFF_BASE_URL`, `TJ_KYC_VERIFF_API_KEY` y `TJ_KYC_VERIFF_SHARED_SECRET`.
 
-## 3. DNS y HTTPS
+Para `TJ_PAYMENT_PROVIDER=MERCADO_PAGO`, staging requiere fuera de Git `TJ_PAYMENT_MP_ACCESS_TOKEN` y `TJ_PAYMENT_MP_WEBHOOK_SECRET`; `TJ_PAYMENT_MP_BASE_URL` conserva el endpoint configurado para el sandbox/proveedor correspondiente.
+
+En staging `TJ_AUTH_DEV_HEADER_ENABLED=false`, `TJ_AUTH_JWT_ENABLED=true`, `TJ_RATE_LIMIT_ENABLED=true`, `TJ_MEDIA_PROVIDER=COTURN` y `TJ_ENVIRONMENT=staging` son obligatorios. `TJ_WEBRTC_FORCE_RELAY=true` puede usarse durante la prueba de infraestructura para demostrar que el tráfico cruza TURN, pero no cambia reglas de Session ni billing.
+
+## 3. DNS, HTTPS y TURN
 
 1. Crear DNS para `TJ_STAGING_HOST` apuntando al host del stack.
-2. Permitir inbound TCP 80/443 y UDP 443 si se desea HTTP/3.
-3. Ejecutar el stack con `docker compose -f ops/staging/docker-compose.staging.yml up -d --build`.
-4. Caddy obtiene y renueva el certificado HTTPS automáticamente.
-5. Verificar `https://$TJ_STAGING_HOST/healthz` y confirmar HTTP 200/UP.
+2. Permitir inbound TCP 80/443 para HTTPS; coturn requiere TCP/UDP 3478 y UDP 49160-49200. UDP 443 puede habilitarse para HTTP/3 de Caddy si se desea.
+3. Configurar `TJ_TURN_EXTERNAL_IP` con la IP pública enrutable del host y `TJ_TURN_URLS` con el hostname/puerto que recibirán los navegadores.
+4. Ejecutar el stack con `docker compose -f ops/staging/docker-compose.staging.yml up -d --build`.
+5. Caddy obtiene y renueva el certificado HTTPS automáticamente.
+6. Verificar `https://$TJ_STAGING_HOST/healthz` y confirmar HTTP 200/UP.
+7. Ejecutar el E2E con dos navegadores y, para la prueba de relay, `TJ_WEBRTC_FORCE_RELAY=true`. Confirmar que ambos reciben video remoto y candidato relay sin exponer `TJ_TURN_SHARED_SECRET` al navegador.
 
 `/internal/**` y `/actuator/**` no se enrutan por el edge público. Prometheus consume `backend:8081/actuator/prometheus` dentro de la red privada.
 
 ## 4. Migraciones controladas
 
-`ops/db/migrate.sh` aplica exactamente V1.0 y V1.1...V1.10 en orden. Cada versión se registra en `public.tj_schema_migration` con SHA-256.
+`ops/db/migrate.sh` aplica exactamente V1.0 y V1.1...V1.11 en orden. Cada versión se registra en `public.tj_schema_migration` con SHA-256. El historial esperado después del corte V1.11 contiene 12 versiones, contando V1.0.
 
 Reglas operativas:
 
@@ -48,6 +59,8 @@ Reglas operativas:
 - backend arranca solo después de `migrate` exitoso;
 - nunca editar una migración ya aplicada en staging; crear una versión nueva;
 - nunca ejecutar DDL manual para “arreglar rápido” producción/staging.
+
+V1.11 crea el mailbox efímero `media.webrtc_signal` como `UNLOGGED`. Sus OFFER/ANSWER/ICE no forman parte del backup duradero. El restore CI verifica que ese mailbox no rehidrate señales de sesiones privadas.
 
 ## 5. Health, logs y correlation id
 
@@ -65,7 +78,7 @@ Prometheus recoge métricas de dominio de baja cardinalidad para `auth`, `auctio
 
 También existen contadores de settlement y liberación de payout. `ops/observability/alerts.yml` cubre backend caído, ratio 5xx, fallos Auth/Auction/Session, webhooks KYC/Payment rechazados, retries de settlement/payout y ráfagas de rate limiting.
 
-El repositorio contiene un Alertmanager base sin destino externo. Antes de declarar alert delivery probado, el despliegue debe inyectar mediante secret/config externa un receiver real y ejecutar una alerta de prueba.
+El repositorio contiene un Alertmanager base sin destino externo. Antes de declarar alert delivery probado, el despliegue debe inyectar mediante secret/config externa un receiver real y ejecutar una alerta de prueba. No colocar webhook URLs, tokens o credenciales del receiver dentro del repositorio.
 
 ## 7. Rate limiting
 
@@ -97,9 +110,10 @@ Cada backup:
 - se escribe primero como temporal;
 - se mueve atómicamente al nombre final;
 - genera sidecar SHA-256;
-- aplica permisos restrictivos al artefacto.
+- aplica permisos restrictivos al artefacto;
+- no preserva contenido efímero del mailbox `media.webrtc_signal`.
 
-La ubicación del volumen/objeto debe tener cifrado at-rest y política de acceso separada del runtime. Para un piloto real, copiar además los backups a almacenamiento externo al host de staging.
+La ubicación del volumen/objeto debe tener cifrado at-rest y política de acceso separada del runtime. Para un piloto real, copiar además los backups a almacenamiento externo al host de staging. El gate de #27 exige demostrar esa separación y un restore desde el artefacto externo; un volumen local de Docker no cuenta como prueba off-host.
 
 ## 10. Restore
 
@@ -110,11 +124,12 @@ Procedimiento:
 1. elegir backup y verificar su `.sha256`;
 2. definir un nombre de DB nuevo en `TJ_RESTORE_DATABASE`;
 3. ejecutar restore;
-4. validar `public.tj_schema_migration`, PostGIS, usuarios de prueba y Golden Path;
-5. solo después cambiar de forma controlada la URL/secret de DB del backend;
-6. conservar la DB anterior hasta cerrar la ventana de rollback.
+4. validar las 12 entradas de `public.tj_schema_migration`, PostGIS, usuarios de prueba y Golden Path;
+5. confirmar que `media.webrtc_signal` no contiene señales rehidratadas;
+6. solo después cambiar de forma controlada la URL/secret de DB del backend;
+7. conservar la DB anterior hasta cerrar la ventana de rollback.
 
-CI ejecuta backup + restore real sobre PostgreSQL/PostGIS y comprueba un registro marcador, el historial de 11 versiones y la extensión PostGIS.
+CI ejecuta backup + restore real sobre PostgreSQL/PostGIS y comprueba un registro marcador, el historial de 12 versiones, la extensión PostGIS y el mailbox WebRTC efímero vacío.
 
 ## 11. Incidente
 
@@ -141,15 +156,15 @@ Después del rollback ejecutar: auth, consulta Auction, consulta Session, webhoo
 
 ## 13. Gate externo pendiente
 
-Este repositorio puede demostrar build, migración, health, métricas, alert rules, rate limiting, scanning, backup y restore en CI. #27 solo puede cerrarse cuando exista evidencia externa de:
+Este repositorio puede demostrar build, migración V1.0...V1.11, health, métricas, alert rules, rate limiting, scanning, backup/restore, frontend Golden Path, TURN relay CI y refresh de credenciales TURN. #27 solo puede cerrarse cuando exista evidencia externa de:
 
 - host + DNS HTTPS real;
 - OAuth/OIDC sandbox real con JWKS;
 - KYC sandbox real y Payment sandbox real con secretos fuera de Git;
-- WebRTC/TURN real para completar la sesión ONLINE;
+- WebRTC/TURN público para completar la sesión ONLINE;
 - webhooks reales llegando por HTTPS y validando firma;
 - canal real de alertas recibiendo una prueba;
-- backup automatizado del staging real y restore probado desde ese artefacto;
+- backup automatizado del staging real, copia off-host y restore probado desde ese artefacto;
 - Golden Path staging completo contra proveedores sandbox.
 
-No declarar esos puntos como completados por configuración o mocks.
+No declarar esos puntos como completados por configuración, CI local o mocks.

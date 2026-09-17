@@ -10,6 +10,7 @@ Use this checklist as evidence for issue #27. A checkbox means proven by executi
 - [ ] Backend API is reachable only through HTTPS edge routes.
 - [ ] PostgreSQL/PostGIS is private and not Internet-exposed.
 - [ ] `migrate` completes before backend startup.
+- [ ] Migration history contains V1.0 through V1.11, 12 rows total.
 - [ ] Re-running `migrate` reports every applied checksum unchanged.
 
 ## Security
@@ -23,6 +24,8 @@ Use this checklist as evidence for issue #27. A checkbox means proven by executi
 - [ ] Rate limits return 429 + `Retry-After` when exceeded.
 - [ ] KYC webhook rejects an invalid signature.
 - [ ] Payment webhook rejects an invalid signature.
+- [ ] TURN shared secret remains server-side and never appears in frontend/runtime browser artifacts.
+- [ ] TURN credentials returned to the browser are short-lived and refresh before expiry.
 - [ ] Dependency review/security scan is green.
 - [ ] Secret scan is green.
 
@@ -40,7 +43,8 @@ Use this checklist as evidence for issue #27. A checkbox means proven by executi
 - [ ] Automated staging backup exists with SHA-256 sidecar.
 - [ ] Backup storage is separated from the running DB volume/host failure domain.
 - [ ] Restore is performed into a new database.
-- [ ] Restored DB contains migration history and PostGIS.
+- [ ] Restored DB contains V1.0 through V1.11 migration history and PostGIS.
+- [ ] Restored `media.webrtc_signal` contains no rehydrated ephemeral signaling rows.
 - [ ] Restored staging data passes the required smoke checks.
 
 ## Provider-backed Golden Path
@@ -54,6 +58,7 @@ Use this checklist as evidence for issue #27. A checkbox means proven by executi
 - [ ] Real payment sandbox refund.
 - [ ] Real provider webhook delivery + signature verification + dedup/retry.
 - [ ] Real WebRTC/TURN ONLINE room.
+- [ ] Forced-relay proof shows two real browsers exchanging remote video through public TURN.
 - [ ] FREE_ONLINE 2 minutes and bilateral paid consent remain server-authoritative.
 - [ ] Disconnect/reconnect billing pause and bilateral resume are proven.
 - [ ] Session settlement posts only when exact CLP result is representable; otherwise `PENDING_ROUNDING_POLICY`.
