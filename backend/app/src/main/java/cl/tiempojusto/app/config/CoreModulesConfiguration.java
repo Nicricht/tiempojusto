@@ -23,7 +23,7 @@ public class CoreModulesConfiguration {
     }
 
     @Bean
-    @Profile({"default", "dev", "test", "ci"})
+    @Profile({"default", "dev", "test", "ci", "staging"})
     @ConditionalOnProperty(name = "tiempojusto.payment.provider", havingValue = "MOCK", matchIfMissing = true)
     public MockPaymentPort mockPaymentPort() {
         return new MockPaymentPort();
