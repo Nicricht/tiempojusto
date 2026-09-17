@@ -35,6 +35,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
+      - name: OIDC public proof unit tests
+        run: python3 -m unittest ops/staging/test_verify_oidc_public.py
       - name: Backend tests
         run: mvn -B -f backend/pom.xml test
       - name: Frontend build
