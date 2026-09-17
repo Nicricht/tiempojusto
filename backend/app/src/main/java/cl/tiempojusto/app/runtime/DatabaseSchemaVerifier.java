@@ -1,5 +1,7 @@
 package cl.tiempojusto.app.runtime;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -11,6 +13,8 @@ import java.util.List;
 @Component
 @ConditionalOnProperty(name = "tiempojusto.runtime.verify-database", havingValue = "true", matchIfMissing = true)
 public class DatabaseSchemaVerifier implements ApplicationRunner {
+
+    private static final Logger LOG = LoggerFactory.getLogger(DatabaseSchemaVerifier.class);
 
     private static final List<String> REQUIRED_RELATIONS = List.of(
             "iam.app_user",
@@ -42,5 +46,11 @@ public class DatabaseSchemaVerifier implements ApplicationRunner {
                 throw new IllegalStateException("Required database relation is missing: " + relation);
             }
         }
+
+        String databaseName = jdbc.queryForObject("select current_database()", String.class);
+        if (databaseName == null || databaseName.isBlank()) {
+            throw new IllegalStateException("Unable to identify connected PostgreSQL database");
+        }
+        LOG.info("Verified TiempoJusto database schema on database={}", databaseName);
     }
 }
