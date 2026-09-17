@@ -1,0 +1,24 @@
+name: Staging Healthz Proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/staging-healthz-proof.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  healthz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify public staging healthz
+        run: |
+          set -euo pipefail
+          url='https://tiempojusto-staging-api.onrender.com/healthz'
+          code="$(curl -sS --retry 6 --retry-delay 10 --retry-all-errors -o /tmp/healthz.out -w '%{http_code}' "$url")"
+          cat /tmp/healthz.out
+          echo "HTTP $code"
+          test "$code" = '200'
