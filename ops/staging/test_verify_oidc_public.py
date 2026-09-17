@@ -41,6 +41,14 @@ class OidcPublicProofTests(unittest.TestCase):
                 lambda _url: {},
             )
 
+    def test_rejects_non_https_expected_issuer(self):
+        with self.assertRaisesRegex(ValidationError, "expected issuer must use HTTPS"):
+            validate_metadata(
+                "https://issuer.example/.well-known/openid-configuration",
+                "http://issuer.example/",
+                lambda _url: {},
+            )
+
     def test_rejects_issuer_mismatch(self):
         def fake_fetch(_url: str):
             return {
