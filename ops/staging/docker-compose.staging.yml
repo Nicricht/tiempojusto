@@ -126,6 +126,11 @@ services:
         VITE_TJ_API_BASE_URL: ""
         VITE_TJ_DEV_MODE: "false"
         VITE_TJ_WEBRTC_FORCE_RELAY: ${TJ_WEBRTC_FORCE_RELAY:-false}
+        VITE_TJ_OIDC_AUTHORIZATION_ENDPOINT: ${VITE_TJ_OIDC_AUTHORIZATION_ENDPOINT:?Configure the public OIDC authorization endpoint}
+        VITE_TJ_OIDC_TOKEN_ENDPOINT: ${VITE_TJ_OIDC_TOKEN_ENDPOINT:?Configure the public OIDC token endpoint}
+        VITE_TJ_OIDC_CLIENT_ID: ${VITE_TJ_OIDC_CLIENT_ID:?Configure the public OIDC client id}
+        VITE_TJ_OIDC_SCOPE: ${VITE_TJ_OIDC_SCOPE:-openid profile}
+        VITE_TJ_OIDC_REDIRECT_URI: ${VITE_TJ_OIDC_REDIRECT_URI:?Configure the public OIDC redirect URI}
     restart: unless-stopped
     expose:
       - "8080"
