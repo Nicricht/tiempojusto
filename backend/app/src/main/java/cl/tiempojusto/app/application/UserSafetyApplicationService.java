@@ -27,6 +27,9 @@ public class UserSafetyApplicationService {
             throw ApiProblem.badRequest("REPORT_SELF_INVALID", "La acción requiere otro usuario.");
         }
         requireUser(request.targetUserId());
+        if (request.appointmentId() != null) {
+            requireReportAppointmentPair(actor, request.targetUserId(), request.appointmentId());
+        }
         String category = request.category() == null ? "" : request.category().trim();
         String description = request.description() == null ? "" : request.description().trim();
         if (category.isBlank() || category.length() > 50) {
@@ -79,6 +82,21 @@ public class UserSafetyApplicationService {
     private void requireUser(UUID userId) {
         Integer count = jdbc.queryForObject("select count(*) from iam.app_user where id = ?", Integer.class, userId);
         if (count == null || count == 0) throw ApiProblem.notFound("USER_NOT_FOUND", "Usuario no existe.");
+    }
+
+    private void requireReportAppointmentPair(UUID actor, UUID targetUserId, UUID appointmentId) {
+        Integer count = jdbc.queryForObject("""
+                select count(*)
+                  from appointment.appointment
+                 where id = ?
+                   and ((host_user_id = ? and bidder_user_id = ?)
+                     or (host_user_id = ? and bidder_user_id = ?))
+                """, Integer.class, appointmentId, actor, targetUserId, targetUserId, actor);
+        if (count == null || count == 0) {
+            throw ApiProblem.forbidden(
+                    "REPORT_APPOINTMENT_FORBIDDEN",
+                    "La cita no corresponde a las partes del reporte.");
+        }
     }
 
     public record ReportRequest(UUID targetUserId, UUID appointmentId, String category, String description) {}
