@@ -41,12 +41,12 @@ describe('TiempoJusto API network states', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const pending = tiempoJustoApi.me();
-    await vi.advanceTimersByTimeAsync(DEFAULT_API_TIMEOUT_MS + 1);
-
-    await expect(pending).rejects.toMatchObject({
+    const rejection = expect(tiempoJustoApi.me()).rejects.toMatchObject({
       name: 'TiempoJustoNetworkError',
       kind: 'timeout',
     } satisfies Partial<TiempoJustoNetworkError>);
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_API_TIMEOUT_MS + 1);
+    await rejection;
   });
 });
