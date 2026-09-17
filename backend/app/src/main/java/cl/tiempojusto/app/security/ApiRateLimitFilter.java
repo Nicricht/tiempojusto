@@ -5,6 +5,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.core.Authentication;
@@ -41,6 +42,7 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
     private final int safetyPerHour;
     private final int payoutPerHour;
 
+    @Autowired
     public ApiRateLimitFilter(
             MeterRegistry registry,
             @Value("${tiempojusto.security.rate-limit.read-per-minute:120}") int readPerMinute,
