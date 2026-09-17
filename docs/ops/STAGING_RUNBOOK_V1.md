@@ -114,6 +114,14 @@ La API usa `Authorization: Bearer` y `SessionCreationPolicy.STATELESS`; no usa c
 
 JWT productivo/staging exige issuer, audience y JWKS. HMAC queda restringido a `ci/dev/test` por el runtime existente. La SPA ejecuta Authorization Code + PKCE S256 con los valores públicos `VITE_TJ_OIDC_*`; la API sigue validando issuer, audience y firma contra JWKS y no confía en decisiones de autenticación tomadas por el navegador.
 
+### Prueba pública OIDC
+
+`ops/staging/verify_oidc_public.py` valida sin secretos que el discovery document y el `jwks_uri` usen HTTPS, que el `issuer` publicado coincida exactamente con el issuer esperado y que el JWKS público contenga al menos una clave.
+
+El workflow manual `.github/workflows/staging-smoke.yml` exige `base_url`, `oidc_discovery_url` y `oidc_expected_issuer`. Al ejecutarlo contra staging, primero valida discovery/JWKS y luego conserva las comprobaciones del edge: health público, API protegida sin autenticación, rutas internas no expuestas, headers de seguridad y correlation id.
+
+Un smoke exitoso demuestra reachability pública de discovery/JWKS y coherencia exacta del issuer. No demuestra por sí solo login completo, callback PKCE, emisión de un access token válido ni que el backend acepte ese token. Esa evidencia se conserva como gate separado de navegador/API real.
+
 ## 9. Backups
 
 El servicio `backup` ejecuta `ops/db/backup.sh` cada 6 horas por defecto. El intervalo se puede cambiar con `TJ_BACKUP_INTERVAL_SECONDS`; retención default 14 días.
@@ -171,10 +179,10 @@ Después del rollback ejecutar: auth, consulta Auction, consulta Session, webhoo
 
 ## 13. Gate externo pendiente
 
-Este repositorio puede demostrar build, plumbing de configuración pública OIDC hacia el bundle frontend, migración V1.0...V1.11, health, métricas, alert rules, rate limiting, scanning, backup/restore, frontend Golden Path, TURN relay CI, refresh de credenciales TURN y seams para inyectar Alertmanager externo y almacenamiento de backup externo. #27 solo puede cerrarse cuando exista evidencia externa de:
+Este repositorio puede demostrar build, plumbing de configuración pública OIDC hacia el bundle frontend, contrato automatizado para verificar discovery/JWKS públicos, migración V1.0...V1.11, health, métricas, alert rules, rate limiting, scanning, backup/restore, frontend Golden Path, TURN relay CI, refresh de credenciales TURN y seams para inyectar Alertmanager externo y almacenamiento de backup externo. #27 solo puede cerrarse cuando exista evidencia externa de:
 
 - host + DNS HTTPS real;
-- OAuth/OIDC sandbox real con JWKS;
+- OAuth/OIDC sandbox real con JWKS y login/callback/token aceptado por el backend;
 - KYC sandbox real y Payment sandbox real con secretos fuera de Git;
 - WebRTC/TURN público para completar la sesión ONLINE;
 - webhooks reales llegando por HTTPS y validando firma;
