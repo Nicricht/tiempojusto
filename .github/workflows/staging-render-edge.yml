@@ -1,0 +1,101 @@
+name: Staging Render Edge
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/staging-render-edge.yml'
+      - 'backend/app/src/main/**'
+      - 'frontend/**'
+      - 'ops/staging/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/staging-render-edge.yml'
+      - 'backend/app/src/main/**'
+      - 'frontend/**'
+      - 'ops/staging/**'
+
+permissions:
+  contents: read
+
+env:
+  TJ_STAGING_API_URL: https://tiempojusto-staging-api.onrender.com
+  TJ_STAGING_WEB_URL: https://tiempojusto-staging-web.onrender.com
+
+jobs:
+  verify-render-edge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Verify frontend is publicly reachable
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --location \
+            --connect-timeout 10 --max-time 30 \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            --output /tmp/frontend.html --write-out '%{http_code}' \
+            "$TJ_STAGING_WEB_URL/")"
+          test "$status" = "200"
+          test -s /tmp/frontend.html
+          echo "Frontend public probe: HTTP $status"
+
+      - name: Verify public healthz over HTTPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            --output /tmp/health.json --write-out '%{http_code}' \
+            "$TJ_STAGING_API_URL/healthz")"
+          test "$status" = "200"
+          python3 - <<'PY'
+          import json
+          with open('/tmp/health.json', encoding='utf-8') as fh:
+              payload = json.load(fh)
+          assert payload == {'status': 'UP'}, payload
+          print('Backend healthz public probe: HTTP 200, status=UP')
+          PY
+
+      - name: Verify frontend to backend CORS preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            --request OPTIONS \
+            --header "Origin: $TJ_STAGING_WEB_URL" \
+            --header 'Access-Control-Request-Method: POST' \
+            --header 'Access-Control-Request-Headers: authorization,content-type' \
+            --dump-header /tmp/cors.headers \
+            --output /tmp/cors.body \
+            --write-out '%{http_code}' \
+            "$TJ_STAGING_API_URL/api/v1/auth/refresh")"
+          test "$status" = "200"
+          python3 - <<'PY'
+          import os
+
+          expected_origin = os.environ['TJ_STAGING_WEB_URL']
+          headers = {}
+          with open('/tmp/cors.headers', encoding='iso-8859-1') as fh:
+              for raw in fh:
+                  if ':' not in raw:
+                      continue
+                  name, value = raw.split(':', 1)
+                  headers[name.strip().lower()] = value.strip()
+
+          actual_origin = headers.get('access-control-allow-origin')
+          assert actual_origin == expected_origin, (actual_origin, expected_origin)
+
+          methods = {m.strip().upper() for m in headers.get('access-control-allow-methods', '').split(',') if m.strip()}
+          assert 'POST' in methods, methods
+
+          credentials = headers.get('access-control-allow-credentials', '').lower()
+          assert credentials != 'true', credentials
+
+          print(f'CORS preflight probe: HTTP 200, origin={actual_origin}, POST allowed')
+          PY
